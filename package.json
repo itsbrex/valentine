@@ -1,0 +1,49 @@
+{
+  "name": "valentine-agent",
+  "version": "0.1.0",
+  "description": "Know before you walk in. The open-source agent that remembers every founder your fund has talked to. Read-only.",
+  "homepage": "https://tryvalentine.com",
+  "type": "module",
+  "bin": {
+    "valentine": "./dist/cli.js",
+    "valentine-agent": "./dist/cli.js",
+    "valentine-mcp": "./dist/mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "AGENTS.md",
+    "SPEC.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/80x-djh/valentine.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "mcp": "tsx src/mcp.ts",
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "prepare": "tsc",
+    "prepublishOnly": "tsc"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@clack/prompts": "^0.7.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "picocolors": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
