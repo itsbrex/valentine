@@ -17,6 +17,9 @@ Set `ANTHROPIC_API_KEY` plus exactly one of the two CRM keys.
 
 ## Install + one-shot verdict (headless)
 
+> Until it's published to npm, replace `valentine-agent` below with
+> `github:80x-djh/valentine` (e.g. `npx -y github:80x-djh/valentine --json acme.com`).
+
 ```bash
 # No install step needed beyond npx; nothing is written until you run init.
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -62,7 +65,9 @@ For agents that speak MCP, mount the server instead of shelling out. It exposes
 one tool, `valentine_verdict(target)`, returning the same JSON.
 
 ```bash
-npx -p valentine-agent valentine-mcp   # stdio MCP server; reads the env vars above
+valentine mcp                          # stdio MCP server; reads the env vars above
+# or straight from GitHub, no install:
+npx -y github:80x-djh/valentine mcp
 ```
 
 Example MCP client config (Claude Desktop / Cursor / any stdio MCP host):
@@ -72,7 +77,7 @@ Example MCP client config (Claude Desktop / Cursor / any stdio MCP host):
   "mcpServers": {
     "valentine": {
       "command": "npx",
-      "args": ["-y", "-p", "valentine-agent", "valentine-mcp"],
+      "args": ["-y", "github:80x-djh/valentine", "mcp"],
       "env": {
         "ANTHROPIC_API_KEY": "sk-ant-...",
         "VALENTINE_ATTIO_KEY": "..."

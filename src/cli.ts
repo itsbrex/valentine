@@ -200,6 +200,7 @@ function printHelp(): void {
       "Usage:\n" +
       `  ${pc.cyan("valentine <domain|name>")}     sweep the fund's memory before a call\n` +
       `  ${pc.cyan("valentine init")}              connect your CRM + choose a model\n` +
+      `  ${pc.cyan("valentine mcp")}               run as an MCP server (Claude, Cursor…)\n` +
       `  ${pc.cyan("valentine watch")}             pre-meeting heads-up (coming soon)\n\n` +
       "Flags:\n" +
       "  --json              machine-readable verdict\n" +
@@ -210,7 +211,7 @@ function printHelp(): void {
       "  --help              this help\n\n" +
       pc.dim(
         "Env: VALENTINE_ATTIO_KEY · VALENTINE_AFFINITY_KEY · ANTHROPIC_API_KEY · VALENTINE_MODEL\n" +
-          "Agents: see AGENTS.md, or run the MCP server with `valentine-mcp`.\n" +
+          "Agents: see AGENTS.md, or run the MCP server with `valentine mcp`.\n" +
           "Exit codes: 0 clean · 10 prior contact · 20 ambiguous · 1 error",
       ),
   );
@@ -226,6 +227,7 @@ async function main(): Promise<void> {
   if (args.includes("--version") || cmd === "version") return void console.log(`valentine ${VERSION}`);
   if (cmd === "help" || args.includes("--help")) return printHelp();
   if (cmd === "init") return runInit(cfg, args);
+  if (cmd === "mcp") return void (await import("./mcp.js")).runMcpServer();
   if (cmd === "watch") return watch();
   if (!cmd) return printHelp();
 

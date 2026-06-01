@@ -57,7 +57,7 @@ Valentine is built to be driven by other agents, not just typed by hand.
 - **Headless CLI** — set the env vars and run `npx valentine-agent --json acme.com`.
   It never prompts under `--json` or a non-TTY, and exit codes encode the verdict
   (`0` clean · `10` prior contact · `20` ambiguous).
-- **MCP server** — `npx -p valentine-agent valentine-mcp` exposes one read-only tool,
+- **MCP server** — `valentine mcp` exposes one read-only tool,
   `valentine_verdict(target)`, for any MCP host (Claude Desktop, Cursor, Hermes,
   openclaws…).
 - Full instructions for agents live in [`AGENTS.md`](./AGENTS.md).
