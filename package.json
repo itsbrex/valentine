@@ -5,9 +5,9 @@
   "homepage": "https://tryvalentine.com",
   "type": "module",
   "bin": {
-    "valentine": "./dist/cli.js",
-    "valentine-agent": "./dist/cli.js",
-    "valentine-mcp": "./dist/mcp.js"
+    "valentine": "dist/cli.js",
+    "valentine-agent": "dist/cli.js",
+    "valentine-mcp": "dist/mcp.js"
   },
   "files": [
     "dist",

@@ -4,11 +4,11 @@
 your fund has ever talked to — and reads your CRM the moment it matters.
 
 ```bash
-npx github:80x-djh/valentine init        # connect your CRM (read-only token)
-npx github:80x-djh/valentine acme.com    # one verdict before the call
+npx valentine-agent init        # connect your CRM (read-only token)
+npx valentine-agent acme.com    # one verdict before the call
 ```
 
-> Once published to npm this shortens to `npx valentine-agent <domain>`.
+> 📖 Full documentation: **https://80x-djh.github.io/valentine/**
 
 You're about to take a founder call. You run `valentine acme.com`. Two seconds
 later: *"⚠ Sarah emailed Acme's founder 3 weeks ago — logged 'passed, too early.'"*
@@ -24,7 +24,7 @@ claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "valentine": { "command": "npx", "args": ["-y", "github:80x-djh/valentine", "mcp"] }
+    "valentine": { "command": "npx", "args": ["-y", "valentine-agent", "mcp"] }
   }
 }
 ```
