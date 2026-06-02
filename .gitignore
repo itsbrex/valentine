@@ -5,3 +5,6 @@ dist/
 .env
 # Valentine stores per-user config + provenance here at runtime:
 .valentine/
+.vercel
+
+.vercel

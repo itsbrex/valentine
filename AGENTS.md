@@ -18,7 +18,7 @@ Set `ANTHROPIC_API_KEY` plus exactly one of the two CRM keys.
 ## Install + one-shot verdict (headless)
 
 > Published to npm as [`valentine-agent`](https://www.npmjs.com/package/valentine-agent).
-> Full docs: https://80x-djh.github.io/valentine/docs/
+> Full docs: https://valentine-gray-kappa.vercel.app/docs/
 
 ```bash
 # No install step needed beyond npx; nothing is written until you run init.
