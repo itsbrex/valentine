@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://valentine-gray-kappa.vercel.app/sitemap.xml
