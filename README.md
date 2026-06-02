@@ -8,7 +8,7 @@ npx valentine-agent init        # connect your CRM (read-only token)
 npx valentine-agent acme.com    # one verdict before the call
 ```
 
-> 📖 Full documentation: **https://valentine-gray-kappa.vercel.app/docs/**
+> 📖 Full documentation: **https://tryvalentine.com/docs/**
 
 You're about to take a founder call. You run `valentine acme.com`. Two seconds
 later: *"⚠ Sarah emailed Acme's founder 3 weeks ago — logged 'passed, too early.'"*
