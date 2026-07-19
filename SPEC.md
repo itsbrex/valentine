@@ -60,22 +60,29 @@ A verdict always carries: **who** (owner), **when** (last touch), **what happene
 ```
 valentine <domain|name|linkedin-url>   # the 10-second gut-check (P0)
 valentine init                         # connect CRM + pick model/auth (P0)
+valentine mcp                          # stdio MCP server for agent hosts (shipped)
+valentine slack                        # serve the /valentine slash command (P2 — shipped)
 valentine watch                        # calendar trigger, heads-up before meetings (P1)
 valentine --json <target>              # machine-readable verdict for scripting (P0)
 valentine help | --version             # (P0)
 ```
 
-Plus, out of process:
-- **Slack** `/valentine acme.com` — team-wide overlap check (P2).
+The Slack trigger is a small webhook server: it verifies the app's signing
+secret, acks within Slack's 3-second window, sweeps with the same read-only
+agent, and answers through `response_url` — ephemeral, visible only to the
+person who ran `/valentine`. No bot token; it cannot post on its own.
 
 ## 7. Onboarding (`valentine init`)
 
 A branded, interactive wizard (the "feels like installing a real tool" moment):
 
-1. **CRM** → Attio or Affinity (HubSpot / Salesforce = "coming soon").
+1. **CRM** → Attio, Affinity, or Salesforce (HubSpot = "coming soon").
+   Salesforce also asks for the instance URL.
 2. **CRM API key** (read-only token encouraged) → tested live, shows workspace name.
-3. **Model provider** → Anthropic API · AWS Bedrock · Local (Ollama).
-4. **Model** → e.g. `claude-haiku-4-5` (cheap, default), `claude-sonnet-4-6`.
+3. **Model provider** → Anthropic API · Local (Ollama) — AWS Bedrock listed,
+   disabled until wired. Ollama asks for host + model instead of an API key.
+4. **Model** → e.g. `claude-haiku-4-5` (cheap, default), `claude-sonnet-4-6`;
+   for Ollama any tool-calling model (llama3.1, qwen2.5…).
 5. **Auth** → API key today. (Subscription/OAuth is a stubbed, clearly-labeled
    "not yet supported for third-party tools" slot — see §10.)
 6. First-run: offer to run a sample sweep.
@@ -85,20 +92,24 @@ Config persists to `~/.valentine/config.json`; secrets may also come from env.
 ## 8. Architecture — three moving parts
 
 ```
-TRIGGER ───► AGENT ───► CONNECTOR ───► your CRM (read-only)
-(cli/watch)  (loop +     (Attio…)
-             tools +
-             prompt)
+TRIGGER ────────► AGENT ───► CONNECTOR ───► your CRM (read-only)
+(cli/mcp/slack/   (loop +     (Attio ·
+ watch)            tools +     Affinity ·
+                   prompt)     Salesforce)
 ```
 
 - **Connector** (`src/connectors/*`) — implements a small `CRMConnector` interface:
-  `whoami()`, `search()`, `getNotes()`, `getActivity()`. Attio first; others slot in.
+  `whoami()`, `search()`, `getContext()`. Attio, Affinity, and Salesforce ship;
+  others slot in.
 - **Agent** (`src/agent.ts`) — the loop: model → read tool → result → repeat →
-  verdict. ~40 lines, hand-rolled on the Anthropic Messages API. Model-swappable.
-- **Trigger** (`src/cli.ts`, later `src/watch.ts`) — how a sweep gets kicked off.
+  verdict. ~40 lines, hand-rolled against a minimal `ModelClient` surface —
+  the Anthropic client satisfies it directly, and `src/ollama.ts` adapts local
+  Ollama models to it. Model- and provider-swappable.
+- **Trigger** (`src/cli.ts`, `src/mcp.ts`, `src/slack.ts`, later `src/watch.ts`)
+  — how a sweep gets kicked off.
 
 Design rule: **the agent and triggers never import a specific CRM** — only the
-`CRMConnector` interface. Adding Affinity = one new file, zero changes elsewhere.
+`CRMConnector` interface. Adding a CRM = one new file, zero changes elsewhere.
 
 ## 9. Safety guarantees (load-bearing for trust)
 
@@ -112,9 +123,10 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
 
 ## 10. Auth & models
 
-- **Today (compliant):** `ANTHROPIC_API_KEY`, or AWS Bedrock / GCP Vertex creds.
+- **Today (compliant):** `ANTHROPIC_API_KEY`, or a local Ollama model (no key —
+  the sweep never leaves the machine). AWS Bedrock / GCP Vertex: not yet wired.
 - **Cost:** a sweep is a few short tool round-trips + a one-line answer — roughly a
-  cent or two on Sonnet, near-zero on Haiku. Haiku is the default.
+  cent or two on Sonnet, near-zero on Haiku, free on Ollama. Haiku is the default.
 - **Subscription/OAuth:** a stubbed auth method, disabled with a clear message, in
   anticipation of Anthropic's post-2026-06-15 third-party terms. Flippable in one
   place (`src/auth.ts`) if/when those terms permit distribution.
@@ -144,13 +156,13 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
 
 ## 14. Roadmap / phasing
 
-- **P0 (build now):** CLI mode end-to-end, `init` with model/auth/CRM choice, Attio
-  connector, verdict engine, `--json`, exit codes, error handling.
+- **P0 (build now):** ~~CLI mode end-to-end, `init` with model/auth/CRM choice, Attio
+  connector, verdict engine, `--json`, exit codes, error handling.~~ (done)
 - **P1:** `valentine watch` — read calendar, DM a heads-up 30 min before external
   meetings (resolve attendee domains → sweep → notify).
-- **P2:** Slack slash command for the whole partnership.
-- **P3:** ~~Affinity~~ (done) / HubSpot / Salesforce connectors.
-- **P4 (revisit):** subscription auth, if/when terms allow.
+- **P2:** ~~Slack slash command for the whole partnership.~~ (done — `valentine slack`)
+- **P3:** ~~Affinity~~ (done) / ~~Salesforce~~ (done) / HubSpot connectors.
+- **P4 (revisit):** subscription auth, if/when terms allow. AWS Bedrock provider.
 
 ## 15. Open questions
 
@@ -160,7 +172,12 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
   and `list_entries` on the single-record GET. Note V1 exposes no org-level
   relationship *owner* or list *stage*, so those stay unresolved (verdict still
   fires on interaction dates / list membership / notes).
-- `watch` notification channel — Slack DM, macOS notification, or email?
-- npm name — `valentine` is taken; publish as `@valentinehq/valentine` and update
-  the landing command, or pick a free bare name.
-- Domain — `valentine.dev` is taken; point the site at `valentine.80x.ai` (TBD).
+- Salesforce field mappings — confirm against a live org. Standard-objects-only
+  (Account/Contact/Note/Task/Opportunity/Campaign via SOQL); access tokens expire
+  with the Salesforce session, so a refresh story (connected-app OAuth) is open.
+- Ollama verdict quality — small local models are noticeably weaker judges than
+  Haiku on messy CRM data; worth a calibration pass and a recommended-models list.
+- `watch` notification channel — Slack DM, macOS notification, or email? (The
+  Slack signing-secret infra from `valentine slack` is reusable here.)
+- ~~npm name~~ — resolved: published as `valentine-agent`.
+- ~~Domain~~ — resolved: `tryvalentine.com`.

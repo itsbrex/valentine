@@ -8,12 +8,20 @@ verdict. It never writes, sends, or moves anything.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | yes | Powers the agent loop. |
+| `ANTHROPIC_API_KEY` | yes* | Powers the agent loop. *Not needed with the Ollama provider. |
 | `VALENTINE_ATTIO_KEY` | one CRM key | Read-only Attio token. |
 | `VALENTINE_AFFINITY_KEY` | one CRM key | Use instead of the Attio key for Affinity. |
+| `VALENTINE_SALESFORCE_KEY` | one CRM key | Salesforce REST access token (read-only user). |
+| `VALENTINE_SALESFORCE_INSTANCE_URL` | with the SF key | e.g. `https://yourorg.my.salesforce.com`. |
 | `VALENTINE_MODEL` | no | Defaults to `claude-haiku-4-5`. |
+| `OLLAMA_HOST` | no | Ollama provider only. Defaults to `http://127.0.0.1:11434`. |
+| `VALENTINE_SLACK_SIGNING_SECRET` | for `valentine slack` | Slack app signing secret. |
 
-Set `ANTHROPIC_API_KEY` plus exactly one of the two CRM keys.
+Set `ANTHROPIC_API_KEY` plus exactly one CRM key. Which CRM and which model
+provider are *choices*, not secrets — they live in `~/.valentine/config.json`
+and are set with headless `init` (below). To run fully local, init with
+`--provider ollama` (a tool-calling model: llama3.1, qwen2.5…) — then no
+Anthropic key is required and nothing leaves the machine.
 
 ## Install + one-shot verdict (headless)
 
@@ -34,6 +42,15 @@ To persist config to `~/.valentine/config.json` without prompts:
 npx valentine-agent init --non-interactive \
   --crm attio --crm-key "$VALENTINE_ATTIO_KEY" \
   --anthropic-key "$ANTHROPIC_API_KEY" --model claude-haiku-4-5
+
+# Salesforce instead of Attio:
+npx valentine-agent init -y --crm salesforce \
+  --crm-key "$VALENTINE_SALESFORCE_KEY" \
+  --instance-url "$VALENTINE_SALESFORCE_INSTANCE_URL" \
+  --anthropic-key "$ANTHROPIC_API_KEY"
+
+# Fully local via Ollama (no Anthropic key):
+npx valentine-agent init -y --provider ollama --model llama3.1
 ```
 
 `--non-interactive` is implied automatically when stdin is not a TTY, so in most

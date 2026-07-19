@@ -165,14 +165,14 @@
 
     <h2>It runs on your machine</h2>
     <p>Valentine is MIT-licensed and runs locally with your own CRM token. None of your pipeline leaves the fund. For this kind of tool that matters more than usual — it's reading every founder you've ever passed on — so there was never a version of it I was going to host myself and ask you to trust.</p>
-    <p>It's also genuinely small. There are three pieces: a connector that reads your CRM, the agent that decides what counts as prior contact, and whatever triggers it — the command line or an MCP host. <b>Attio and Affinity work today.</b> HubSpot and Salesforce are a connector each, and the connector is a small enough interface that you can write your own in an afternoon if you'd rather not wait for me.</p>
+    <p>It's also genuinely small. There are three pieces: a connector that reads your CRM, the agent that decides what counts as prior contact, and whatever triggers it — the command line, an MCP host, or Slack. <b>Attio, Affinity, and Salesforce work today.</b> HubSpot is a connector away, and the connector is a small enough interface that you can write your own in an afternoon if you'd rather not wait for me. Prefer nothing to leave your machine at all? Run it on a local Ollama model — no API key needed.</p>
 
     <h2>Ways to run it</h2>
     <ul>
       <li><code>valentine acme.com</code> — the one I use most. Run it before a call.</li>
       <li><code>valentine mcp</code> — run it as an <a href="./docs/#mcp">MCP server</a> so Claude, Cursor or any agent can ask for you, mid-conversation.</li>
+      <li><code>/valentine acme.com</code> — the same thing from <a href="./docs/#slack">Slack</a>, for the rest of the partnership. <code>valentine slack</code> serves it.</li>
       <li><code>valentine watch</code> <span class="soon">— calendar heads-up before external meetings (coming soon)</span></li>
-      <li><code>/valentine acme.com</code> <span class="soon">— the same thing from Slack, for the rest of the partnership (coming soon)</span></li>
     </ul>
 
     <h2>What it catches</h2>

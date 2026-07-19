@@ -4,10 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Valentine — Docs</title>
-<meta name="description" content="Documentation for Valentine: a tiny, read-only open-source agent that sweeps a venture fund's CRM before a call and tells you whether anyone has talked to a founder before. CLI, MCP, headless, Attio + Affinity." />
+<meta name="description" content="Documentation for Valentine: a tiny, read-only open-source agent that sweeps a venture fund's CRM before a call and tells you whether anyone has talked to a founder before. CLI, MCP, Slack, headless. Attio, Affinity + Salesforce. Anthropic or local Ollama models." />
 <meta property="og:type" content="website" />
 <meta property="og:title" content="Valentine — Docs" />
-<meta property="og:description" content="A tiny, read-only open-source agent for venture capital. CLI, MCP server, headless. Attio + Affinity." />
+<meta property="og:description" content="A tiny, read-only open-source agent for venture capital. CLI, MCP server, Slack, headless. Attio, Affinity + Salesforce." />
 <meta property="og:url" content="https://tryvalentine.com/docs/" />
 <link rel="canonical" href="https://tryvalentine.com/docs/" />
 <meta name="theme-color" content="#fdfdfb" media="(prefers-color-scheme: light)" />
@@ -111,6 +111,7 @@
       <div class="grp">Integrate</div>
       <ul>
         <li><a href="#mcp">MCP server</a></li>
+        <li><a href="#slack">Slack</a></li>
         <li><a href="#headless">Headless / agents</a></li>
         <li><a href="#exit-codes">Exit codes</a></li>
       </ul>
@@ -162,10 +163,10 @@ valentine "Jane Founder"</code></pre>
     <h2 id="what-it-needs">What it needs</h2>
     <p>Two credentials:</p>
     <ul class="bul">
-      <li>A <b>read-only CRM API token</b> — Attio or Affinity.</li>
-      <li>An <b>Anthropic API key</b> — this powers the agent. A sweep on the default model costs roughly a cent.</li>
+      <li>A <b>read-only CRM API token</b> — Attio, Affinity, or Salesforce (Salesforce also needs the instance URL).</li>
+      <li>An <b>Anthropic API key</b> — this powers the agent. A sweep on the default model costs roughly a cent. <i>Or</i> a local <a href="#models">Ollama</a> model — then no API key at all, and nothing leaves your machine.</li>
     </ul>
-    <p>Both can be entered interactively with <code>valentine init</code>, or supplied as environment variables (see <a href="#configure">Configuration</a>). Nothing leaves your machine except the model call to Anthropic.</p>
+    <p>Both can be entered interactively with <code>valentine init</code>, or supplied as environment variables (see <a href="#configure">Configuration</a>). Nothing leaves your machine except the model call to Anthropic — and with Ollama, not even that.</p>
 
     <hr/>
 
@@ -178,6 +179,7 @@ valentine "Jane Founder"</code></pre>
       <tr><td><code>valentine &lt;domain&#124;name&gt;</code></td><td>Sweep the fund's CRM for prior contact and print a verdict.</td></tr>
       <tr><td><code>valentine init</code></td><td>Connect a CRM and choose a model. Interactive, or headless with flags / a non-TTY.</td></tr>
       <tr><td><code>valentine mcp</code></td><td>Run as a stdio MCP server (see <a href="#mcp">MCP</a>).</td></tr>
+      <tr><td><code>valentine slack</code></td><td>Serve the <code>/valentine</code> slash command for your Slack workspace (see <a href="#slack">Slack</a>).</td></tr>
       <tr><td><code>valentine watch</code> <span class="pill soon">roadmap</span></td><td>Pre-meeting calendar heads-up. Prints the planned behaviour today.</td></tr>
       <tr><td><code>valentine help</code></td><td>Print usage. Same as <code>--help</code> or no arguments.</td></tr>
       <tr><td><code>valentine version</code></td><td>Print the version. Same as <code>--version</code>.</td></tr>
@@ -188,10 +190,14 @@ valentine "Jane Founder"</code></pre>
       <tr><th>Flag</th><th>Meaning</th></tr>
       <tr><td><code>--json</code></td><td>Print the verdict as a JSON object instead of formatted text. Never prompts.</td></tr>
       <tr><td><code>--non-interactive</code>, <code>-y</code></td><td>Never prompt. Implied automatically when stdin isn't a TTY (most agent sandboxes).</td></tr>
-      <tr><td><code>--crm &lt;attio&#124;affinity&gt;</code></td><td>Which CRM, for headless <code>init</code>.</td></tr>
+      <tr><td><code>--crm &lt;attio&#124;affinity&#124;salesforce&gt;</code></td><td>Which CRM, for headless <code>init</code>.</td></tr>
       <tr><td><code>--crm-key &lt;key&gt;</code> <span class="muted">(alias <code>--key</code>)</span></td><td>The CRM token, for headless <code>init</code>.</td></tr>
+      <tr><td><code>--instance-url &lt;url&gt;</code></td><td>Salesforce instance URL, for headless <code>init</code>.</td></tr>
+      <tr><td><code>--provider &lt;anthropic&#124;ollama&gt;</code></td><td>Model provider, for headless <code>init</code>.</td></tr>
+      <tr><td><code>--ollama-host &lt;url&gt;</code></td><td>Ollama host, for headless <code>init</code>. Defaults to <code>http://127.0.0.1:11434</code>.</td></tr>
       <tr><td><code>--anthropic-key &lt;key&gt;</code></td><td>The Anthropic key, for headless <code>init</code>.</td></tr>
       <tr><td><code>--model &lt;id&gt;</code></td><td>Override the model for this <code>init</code>.</td></tr>
+      <tr><td><code>--port &lt;n&gt;</code></td><td>Port for the <code>slack</code> server. Defaults to 3141.</td></tr>
       <tr><td><code>--help</code> / <code>--version</code></td><td>Usage / version.</td></tr>
     </table>
 
@@ -204,7 +210,12 @@ valentine --json "Patrick Collison"
 
 <span class="cm"># configure without any prompts (CI, agents, dotfiles)</span>
 valentine init -y --crm attio --crm-key "$VALENTINE_ATTIO_KEY" \
-  --anthropic-key "$ANTHROPIC_API_KEY" --model claude-haiku-4-5</code></pre>
+  --anthropic-key "$ANTHROPIC_API_KEY" --model claude-haiku-4-5
+
+<span class="cm"># fully local: Salesforce CRM + an Ollama model, no Anthropic key</span>
+valentine init -y --crm salesforce --crm-key "$VALENTINE_SALESFORCE_KEY" \
+  --instance-url "$VALENTINE_SALESFORCE_INSTANCE_URL" \
+  --provider ollama --model llama3.1</code></pre>
 
     <h2 id="configure">Configuration</h2>
     <p>Config resolves from two places. A saved file is read first; environment variables fill in anything missing (and <code>VALENTINE_MODEL</code> always wins for the model).</p>
@@ -212,23 +223,30 @@ valentine init -y --crm attio --crm-key "$VALENTINE_ATTIO_KEY" \
     <h3>Config file</h3>
     <p>Written by <code>valentine init</code> to <code>~/.valentine/config.json</code>:</p>
     <pre><code>{
-  "crm": "attio",                 <span class="cm">// "attio" | "affinity"</span>
-  "attioKey": "...",              <span class="cm">// or "affinityKey"</span>
-  "provider": "anthropic",
-  "model": "claude-haiku-4-5",
+  "crm": "attio",                 <span class="cm">// "attio" | "affinity" | "salesforce"</span>
+  "attioKey": "...",              <span class="cm">// or "affinityKey" / "salesforceKey"</span>
+                                  <span class="cm">// salesforce also sets "salesforceInstanceUrl"</span>
+  "provider": "anthropic",        <span class="cm">// "anthropic" | "ollama"</span>
+  "model": "claude-haiku-4-5",    <span class="cm">// for ollama: e.g. "llama3.1"</span>
   "authMethod": "api_key",
-  "anthropicKey": "sk-ant-..."
+  "anthropicKey": "sk-ant-...",   <span class="cm">// not needed with ollama</span>
+  "ollamaHost": "http://127.0.0.1:11434"  <span class="cm">// ollama only</span>
 }</code></pre>
 
     <h3>Environment variables</h3>
     <table>
       <tr><th>Variable</th><th>Purpose</th></tr>
-      <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Powers the agent loop. Required.</td></tr>
-      <tr><td><code>VALENTINE_ATTIO_KEY</code></td><td>Read-only Attio token. Set this <i>or</i> the Affinity key.</td></tr>
-      <tr><td><code>VALENTINE_AFFINITY_KEY</code></td><td>Read-only Affinity token. Use instead of the Attio key.</td></tr>
+      <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Powers the agent loop. Required — unless the provider is Ollama.</td></tr>
+      <tr><td><code>VALENTINE_ATTIO_KEY</code></td><td>Read-only Attio token. Set exactly one CRM key.</td></tr>
+      <tr><td><code>VALENTINE_AFFINITY_KEY</code></td><td>Read-only Affinity token.</td></tr>
+      <tr><td><code>VALENTINE_SALESFORCE_KEY</code></td><td>Salesforce REST access token (a read-only user's — e.g. from <code>sf org display --json</code> or a connected app).</td></tr>
+      <tr><td><code>VALENTINE_SALESFORCE_INSTANCE_URL</code></td><td>Required with the Salesforce key, e.g. <code>https://yourorg.my.salesforce.com</code>.</td></tr>
       <tr><td><code>VALENTINE_MODEL</code></td><td>Override the model. Defaults to <code>claude-haiku-4-5</code>.</td></tr>
+      <tr><td><code>OLLAMA_HOST</code></td><td>Ollama host (provider "ollama"). Defaults to <code>http://127.0.0.1:11434</code>; <code>VALENTINE_OLLAMA_HOST</code> wins if both set.</td></tr>
+      <tr><td><code>VALENTINE_SLACK_SIGNING_SECRET</code></td><td>Slack app signing secret, for <code>valentine slack</code>.</td></tr>
+      <tr><td><code>VALENTINE_SLACK_PORT</code></td><td>Port for the Slack server. Defaults to 3141.</td></tr>
     </table>
-    <p class="muted">Set <code>ANTHROPIC_API_KEY</code> plus exactly one CRM key and you can skip <code>init</code> entirely — useful in agent sandboxes and CI.</p>
+    <p class="muted">Set <code>ANTHROPIC_API_KEY</code> plus exactly one CRM key and you can skip <code>init</code> entirely — useful in agent sandboxes and CI. Which CRM and which provider are <i>choices</i>, not secrets — they live in the config file, set via (headless) <code>init</code>. A <code>.env.example</code> with everything ships in the repo.</p>
 
     <h2 id="verdict">The verdict</h2>
     <p>Every run resolves to exactly one verdict. This is the heart of the product — one line a partner can read in two seconds.</p>
@@ -250,13 +268,15 @@ valentine init -y --crm attio --crm-key "$VALENTINE_ATTIO_KEY" \
 }</code></pre>
 
     <h2 id="models">Models &amp; cost</h2>
-    <p>Valentine runs on the Anthropic API. Two models are offered at setup:</p>
+    <p>Valentine runs on the Anthropic API or a local Ollama model. On Anthropic, two models are offered at setup:</p>
     <table>
       <tr><th>Model</th><th>Notes</th></tr>
       <tr><td><code>claude-haiku-4-5</code></td><td>Fast and cheap. The default and recommended choice — roughly a cent per sweep.</td></tr>
       <tr><td><code>claude-sonnet-4-6</code></td><td>Sharper reasoning on messy data, ~10× the cost.</td></tr>
     </table>
-    <p class="muted">AWS Bedrock and local/Ollama providers are stubbed in the registry but not yet enabled. Authentication is via API key; using a Claude Pro/Max subscription isn't permitted for third-party tools under Anthropic's terms, so that path is deliberately disabled.</p>
+    <h3>Local / Ollama</h3>
+    <p>Pick the <b>Local / Ollama</b> provider in <code>init</code> (or <code>--provider ollama</code>) to run the loop against a model on your own machine — no API key, no cost, and the sweep never leaves localhost. Point it at any <b>tool-calling</b> model: <code>llama3.1</code>, <code>qwen2.5</code>, <code>mistral-nemo</code>… Small local models are weaker judges than Haiku on messy CRM data, so spot-check verdicts before trusting them blind.</p>
+    <p class="muted">The AWS Bedrock provider is stubbed in the registry but not yet enabled. Authentication is via API key; using a Claude Pro/Max subscription isn't permitted for third-party tools under Anthropic's terms, so that path is deliberately disabled.</p>
 
     <hr/>
 
@@ -286,6 +306,18 @@ npx -y valentine-agent mcp   <span class="cm"># no install</span></code></pre>
 }</code></pre>
     <p class="muted">The same block works for Cursor and any other stdio MCP host. If you've already run <code>valentine init</code>, you can drop the <code>env</code> block — the server reads <code>~/.valentine/config.json</code> too.</p>
 
+    <h2 id="slack">Slack</h2>
+    <p><code>valentine slack</code> serves the <code>/valentine</code> slash command for your workspace: anyone types <code>/valentine acme.com</code> in Slack and gets the verdict back — <b>ephemerally</b>, visible only to them. No bot token is required; replies travel through Slack's own <code>response_url</code>, so the server physically cannot post anywhere on its own. Read-only stays intact.</p>
+    <h3>Setup</h3>
+    <ul class="bul">
+      <li>Create a Slack app → <b>Slash Commands</b> → <code>/valentine</code>, and point the Request URL at this server (expose it with ngrok/cloudflared, or run it on a host Slack can reach).</li>
+      <li>Copy the app's <b>Signing Secret</b> (Basic Information) into <code>VALENTINE_SLACK_SIGNING_SECRET</code>.</li>
+      <li>Configure a CRM + model as usual (<code>valentine init</code> or env vars), then start the server:</li>
+    </ul>
+    <pre><code>export VALENTINE_SLACK_SIGNING_SECRET=...
+valentine slack               <span class="cm"># listens on :3141 (or --port / VALENTINE_SLACK_PORT)</span></code></pre>
+    <p class="muted">Every request is verified against the signing secret (HMAC, with a replay-window check) before anything runs. The server acks within Slack's 3-second window and sends the verdict as a follow-up when the sweep finishes.</p>
+
     <h2 id="headless">Headless / agents</h2>
     <p>Valentine is built to be driven by other agents, not only typed by hand. Two ways in:</p>
     <ul class="bul">
@@ -314,9 +346,9 @@ echo $?                                <span class="cm"># 0 / 10 / 20 / 1</span>
     <h2 id="how">How it works</h2>
     <p>Three moving parts, each small enough to read end to end.</p>
     <ul class="bul">
-      <li><b>A connector</b> (<code>src/connectors/</code>) — read-only CRM access behind a small <code>CRMConnector</code> interface. Attio and Affinity ship in the box; the interface has no mutating methods at all.</li>
-      <li><b>An agent</b> (<code>src/agent.ts</code>) — the loop: the model thinks, calls a read tool, gets the result, repeats, then calls <code>submit_verdict</code>. Hand-rolled on the Anthropic Messages API, capped at 10 steps, so it stays tiny and auditable.</li>
-      <li><b>A trigger</b> (<code>src/cli.ts</code>) — the CLI today; the MCP server; <code>watch</code> and a Slack command on the roadmap.</li>
+      <li><b>A connector</b> (<code>src/connectors/</code>) — read-only CRM access behind a small <code>CRMConnector</code> interface. Attio, Affinity, and Salesforce ship in the box; the interface has no mutating methods at all.</li>
+      <li><b>An agent</b> (<code>src/agent.ts</code>) — the loop: the model thinks, calls a read tool, gets the result, repeats, then calls <code>submit_verdict</code>. Hand-rolled against a minimal <code>ModelClient</code> surface — the Anthropic client satisfies it directly, a small adapter (<code>src/ollama.ts</code>) maps local Ollama models onto it. Capped at 10 steps, so it stays tiny and auditable.</li>
+      <li><b>A trigger</b> (<code>src/cli.ts</code>) — the CLI, the MCP server, and the <a href="#slack">Slack slash command</a> today; <code>watch</code> on the roadmap.</li>
     </ul>
     <p>The rules the agent runs by live in one file, <code>src/prompt.ts</code> — its system prompt. In short: read-only always; search companies (and people if implied); pull context on a promising match; weigh every signal; emit exactly one verdict and no prose around it.</p>
 
@@ -331,7 +363,7 @@ echo $?                                <span class="cm"># 0 / 10 / 20 / 1</span>
     <p class="muted">There is no fourth tool. There is no write tool. The agent physically cannot mutate the CRM, because the capability isn't in the contract.</p>
 
     <h2 id="connectors">CRM connectors</h2>
-    <p>Both connectors are read-only and data-model-agnostic: they rely only on standard features present on every workspace, and anything custom or missing is skipped gracefully rather than assumed. A bad term or an object the token can't see returns "no match" — it never crashes a sweep.</p>
+    <p>All three connectors are read-only and data-model-agnostic: they rely only on standard features present on every workspace, and anything custom or missing is skipped gracefully rather than assumed. A bad term or an object the token can't see returns "no match" — it never crashes a sweep.</p>
 
     <h3>Attio</h3>
     <p>Uses Attio's standard system features: the <code>name</code> / <code>domains</code> attributes; the built-in interaction signals (first/last email and calendar interaction, strongest connection user and strength); the notes, list-entries, and workspace-members endpoints. So Valentine can surface the relationship owner, connection strength, last email, last meeting, list memberships with stage, notes, and linked people.</p>
@@ -339,8 +371,11 @@ echo $?                                <span class="cm"># 0 / 10 / 20 / 1</span>
     <h3>Affinity</h3>
     <p>Uses Affinity's standard V1 API: organization / person search with interaction dates and persons, plus the notes, single-record list-entries, and lists endpoints. Valentine maps companies → organizations and people → persons. Affinity's V1 has no standard org-level owner or connection-strength field, so those stay unresolved — but the verdict still fires on interaction dates, list membership, notes, and linked people.</p>
 
+    <h3>Salesforce</h3>
+    <p>Uses standard objects only, via SOQL over the REST API: Account / Contact search (name, website, owner, <code>LastActivityDate</code>); Note bodies and Task subjects for outcomes like "passed, too early"; Opportunities (with stage) and Campaigns as list signals; and an Account's Contacts as linked people. Auth is a REST access token + instance URL — use a read-only user's token from a connected app, or locally <code>sf org display --json</code>. Access tokens expire with the Salesforce session; refresh is on the backlog.</p>
+
     <h3>Adding a CRM <span class="pill soon">contributions welcome</span></h3>
-    <p>HubSpot and Salesforce are each one new file: implement the <code>CRMConnector</code> interface (<code>whoami</code>, <code>search</code>, <code>getContext</code>) and add a case to the factory. Nothing else in the codebase changes — the agent and triggers depend only on the interface, never on a specific CRM.</p>
+    <p>HubSpot is one new file: implement the <code>CRMConnector</code> interface (<code>whoami</code>, <code>search</code>, <code>getContext</code>) and add a case to the factory. Nothing else in the codebase changes — the agent and triggers depend only on the interface, never on a specific CRM.</p>
 
     <h2 id="safety">Safety &amp; privacy</h2>
     <ul class="bul">
@@ -357,15 +392,20 @@ echo $?                                <span class="cm"># 0 / 10 / 20 / 1</span>
       <li><b>"Not configured" / it errors instead of asking.</b> Under <code>--json</code> or a non-TTY, Valentine fails loud rather than launching a wizard. Set <code>ANTHROPIC_API_KEY</code> + a CRM key, or run <code>valentine init</code>.</li>
       <li><b>Connection failed at <code>init</code>.</b> The token couldn't reach the workspace. Check it's a valid read token for the CRM you selected.</li>
       <li><b>Always "clean" when you expect a hit.</b> The token may lack access to the object, notes, lists, or members — those sub-reads degrade to empty silently. Confirm the token's scope.</li>
+      <li><b>Salesforce worked yesterday, 401 today.</b> Access tokens expire with the Salesforce session. Mint a fresh one (<code>sf org display --json</code>) or wire a connected app.</li>
+      <li><b>Ollama errors or never calls a tool.</b> Check <code>ollama serve</code> is running, the model is pulled, and it supports tool calling (llama3.1, qwen2.5…). Models without tool support can't drive the loop.</li>
+      <li><b>Slack says "dispatch_failed".</b> The server isn't reachable at the Request URL, or the signing secret doesn't match — check the tunnel and <code>VALENTINE_SLACK_SIGNING_SECRET</code>.</li>
       <li><b>Subscription auth error.</b> Pro/Max subscriptions aren't allowed for third-party tools; choose an API key in <code>init</code>.</li>
     </ul>
 
     <h2 id="roadmap">Roadmap</h2>
     <ul class="bul">
       <li><b><code>valentine watch</code></b> — read your calendar, resolve each external attendee's domain, sweep, and DM a one-line heads-up ~30 minutes before the meeting. The interface is stubbed; the command prints its planned behaviour today.</li>
-      <li><b>Slack command</b> — <code>/valentine acme.com</code> for the rest of the partnership.</li>
-      <li><b>More CRMs</b> — HubSpot and Salesforce connectors.</li>
+      <li><b>More CRMs</b> — a HubSpot connector.</li>
+      <li><b>AWS Bedrock</b> — listed in the provider registry, disabled until wired.</li>
+      <li><b>Salesforce token refresh</b> — connected-app OAuth instead of session tokens.</li>
     </ul>
+    <p class="muted">Recently shipped: the Salesforce connector, the local Ollama provider, and the <code>/valentine</code> Slack command.</p>
 
     <h2 id="develop">Develop</h2>
     <pre><code>git clone https://github.com/80x-djh/valentine

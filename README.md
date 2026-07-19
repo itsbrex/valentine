@@ -40,13 +40,15 @@ moves a deal. There are no write tools in the codebase, by design.
 ## How it works — three moving parts
 
 1. **A connector** (`src/connectors/`) — read-only CRM access behind a small
-   `CRMConnector` interface. Attio and Affinity out of the box; HubSpot /
-   Salesforce are one new file away.
+   `CRMConnector` interface. Attio, Affinity, and Salesforce out of the box;
+   HubSpot is one new file away.
 2. **An agent** (`src/agent.ts`) — the loop: model thinks → calls a read tool →
    gets the result → repeats → calls `submit_verdict`. ~40 lines, hand-rolled on
-   the Anthropic API so you can read every line.
-3. **A trigger** (`src/cli.ts`) — CLI today; `valentine watch` (calendar) and a
-   Slack command on the roadmap.
+   the Anthropic API so you can read every line. Runs on Anthropic models or a
+   local Ollama model (then nothing leaves your machine at all).
+3. **A trigger** (`src/cli.ts`) — the CLI, the MCP server, and `valentine slack`
+   (a `/valentine` slash command) today; `valentine watch` (calendar) on the
+   roadmap.
 
 The rules it runs by live in `src/prompt.ts`. Full design in [`SPEC.md`](./SPEC.md).
 
@@ -66,7 +68,10 @@ Valentine is built to be driven by other agents, not just typed by hand.
 
 Runs with your CRM token, on your machine. Nothing leaves the fund. Keys are
 stored locally at `~/.valentine/config.json` (or via env: `VALENTINE_ATTIO_KEY`,
-`VALENTINE_AFFINITY_KEY`, `ANTHROPIC_API_KEY`).
+`VALENTINE_AFFINITY_KEY`, `VALENTINE_SALESFORCE_KEY` +
+`VALENTINE_SALESFORCE_INSTANCE_URL`, `ANTHROPIC_API_KEY`). Prefer a local model?
+Pick the Ollama provider in `valentine init` — no Anthropic key needed. See
+[`.env.example`](./.env.example) for the full list.
 
 ## Develop
 

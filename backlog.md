@@ -7,6 +7,8 @@ Read the user's calendar, resolve each external attendee's email domain, run the
 read-only sweep, and surface a heads-up ~30 min before each external meeting.
 - Auth: Google Calendar OAuth (per-user, local).
 - Notification channel — open question: Slack DM vs macOS notification vs email.
+  (`valentine slack` now ships the signing-secret webhook infra; a DM notifier
+  would need a bot token on top.)
 - Must stay read-only on the CRM side (sweep only).
 
 ## Internal-only annotation on the calendar event (exploration)
@@ -44,6 +46,11 @@ Caveats to resolve later:
   the CRM connector.
 
 ## Other
-- Slack slash command `/valentine acme.com` (P2).
-- Additional CRM connectors: Affinity, HubSpot, Salesforce (P3).
+- ~~Slack slash command `/valentine acme.com` (P2).~~ Shipped — `valentine slack`.
+- Additional CRM connectors: ~~Affinity~~ (shipped), ~~Salesforce~~ (shipped),
+  HubSpot (P3).
+- ~~Local models via Ollama.~~ Shipped — `--provider ollama`.
+- AWS Bedrock provider (listed in `init`, disabled until wired).
+- Salesforce token refresh (connected-app OAuth) — v1 takes a session access
+  token that expires.
 - Subscription auth, if/when Anthropic's third-party terms allow (P4).
