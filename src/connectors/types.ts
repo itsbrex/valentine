@@ -1,6 +1,6 @@
 // The CRM connector contract. The agent and triggers depend ONLY on this —
-// never on a specific CRM. Adding Affinity/HubSpot = one new file implementing
-// this interface, zero changes elsewhere.
+// never on a specific CRM. Adding a CRM (e.g. HubSpot) = one new file
+// implementing this interface, zero changes elsewhere.
 //
 // Note: there are NO mutating methods here, by design. Valentine is read-only,
 // enforced by the absence of any write capability in the contract itself.

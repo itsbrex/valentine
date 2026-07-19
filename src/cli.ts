@@ -10,7 +10,14 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loadConfig, saveConfig, type Config } from "./config.js";
 import { makeConnector, crmKey } from "./connectors/index.js";
-import { makeClient, MODELS, PROVIDERS, DEFAULT_MODEL } from "./models.js";
+import {
+  makeClient,
+  MODELS,
+  PROVIDERS,
+  DEFAULT_MODEL,
+  DEFAULT_OLLAMA_HOST,
+  DEFAULT_OLLAMA_MODEL,
+} from "./models.js";
 import { lookup } from "./agent.js";
 import { renderVerdict, exitCodeFor, toJson } from "./output.js";
 import { watch } from "./watch.js";
@@ -49,24 +56,39 @@ async function ask<T>(v: Promise<T | symbol>): Promise<T> {
 // validates that the two required keys are present — no prompts, ever.
 function runInitHeadless(cfg: Config, args: string[]): void {
   const crm = (getFlag(args, "crm") as Config["crm"]) || cfg.crm;
-  if (crm !== "attio" && crm !== "affinity") bail(`--crm must be "attio" or "affinity"`);
+  if (crm !== "attio" && crm !== "affinity" && crm !== "salesforce")
+    bail(`--crm must be "attio", "affinity", or "salesforce"`);
   cfg.crm = crm;
 
   const key = getFlag(args, "crm-key") ?? getFlag(args, "key");
   if (key) {
     if (crm === "affinity") cfg.affinityKey = key;
+    else if (crm === "salesforce") cfg.salesforceKey = key;
     else cfg.attioKey = key;
   }
+  cfg.salesforceInstanceUrl = getFlag(args, "instance-url") ?? cfg.salesforceInstanceUrl;
+
+  const provider = (getFlag(args, "provider") as Config["provider"]) || cfg.provider;
+  if (provider !== "anthropic" && provider !== "ollama")
+    bail(`--provider must be "anthropic" or "ollama"`);
+  cfg.provider = provider;
+  cfg.authMethod = "api_key";
 
   const model = getFlag(args, "model");
   if (model) cfg.model = model;
   cfg.anthropicKey = getFlag(args, "anthropic-key") ?? cfg.anthropicKey;
-  cfg.provider = "anthropic";
-  cfg.authMethod = "api_key";
+  if (provider === "ollama") {
+    cfg.ollamaHost = getFlag(args, "ollama-host") ?? cfg.ollamaHost ?? DEFAULT_OLLAMA_HOST;
+    // A claude-* model id makes no sense against Ollama — swap in the local default.
+    if (!model && cfg.model.startsWith("claude-")) cfg.model = DEFAULT_OLLAMA_MODEL;
+  }
 
   if (!crmKey(cfg))
     bail(`No ${crm} key. Pass --crm-key or set VALENTINE_${crm.toUpperCase()}_KEY.`);
-  if (!cfg.anthropicKey) bail("No Anthropic key. Pass --anthropic-key or set ANTHROPIC_API_KEY.");
+  if (crm === "salesforce" && !cfg.salesforceInstanceUrl)
+    bail("Salesforce needs --instance-url or VALENTINE_SALESFORCE_INSTANCE_URL.");
+  if (provider === "anthropic" && !cfg.anthropicKey)
+    bail("No Anthropic key. Pass --anthropic-key or set ANTHROPIC_API_KEY.");
 
   saveConfig(cfg);
   console.log(`valentine: configured (${cfg.crm} · ${cfg.model}). Try: valentine acme.com`);
@@ -84,23 +106,39 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
       options: [
         { value: "attio", label: "Attio" },
         { value: "affinity", label: "Affinity" },
-        { value: "soon", label: "HubSpot / Salesforce", hint: "coming soon — PRs welcome" },
+        { value: "salesforce", label: "Salesforce" },
+        { value: "soon", label: "HubSpot", hint: "coming soon — PRs welcome" },
       ],
       initialValue: "attio",
     }),
   );
-  if (crm === "soon") bail("Only Attio and Affinity are supported today.");
+  if (crm === "soon") bail("HubSpot isn't supported yet — Attio, Affinity, and Salesforce are.");
   cfg.crm = crm as Config["crm"];
 
-  const crmLabel = cfg.crm === "affinity" ? "Affinity" : "Attio";
+  const crmLabel = { attio: "Attio", affinity: "Affinity", salesforce: "Salesforce" }[cfg.crm];
   const key = await ask(
     p.password({
-      message: `${crmLabel} API key (read-only is fine)`,
+      message:
+        cfg.crm === "salesforce"
+          ? "Salesforce access token (a read-only user's is fine — try `sf org display --json`)"
+          : `${crmLabel} API key (read-only is fine)`,
       validate: (v) => (v.length < 10 ? "That doesn't look like a key" : undefined),
     }),
   );
   if (cfg.crm === "affinity") cfg.affinityKey = key;
+  else if (cfg.crm === "salesforce") cfg.salesforceKey = key;
   else cfg.attioKey = key;
+
+  if (cfg.crm === "salesforce") {
+    cfg.salesforceInstanceUrl = await ask(
+      p.text({
+        message: "Salesforce instance URL",
+        placeholder: "https://yourorg.my.salesforce.com",
+        initialValue: cfg.salesforceInstanceUrl ?? "",
+        validate: (v) => (v.startsWith("https://") ? undefined : "Must be an https:// URL"),
+      }),
+    );
+  }
 
   const s = p.spinner();
   s.start(`Connecting to ${crmLabel}`);
@@ -120,10 +158,31 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
         label: pr.label,
         hint: pr.enabled ? undefined : "coming soon",
       })),
-      initialValue: "anthropic",
+      initialValue: cfg.provider as string,
     }),
   );
-  if (!PROVIDERS.find((pr) => pr.id === provider)?.enabled) bail("Only the Anthropic API is supported today.");
+  if (!PROVIDERS.find((pr) => pr.id === provider)?.enabled)
+    bail("That provider isn't wired yet — Anthropic API and local Ollama are.");
+
+  if (provider === "ollama") {
+    cfg.provider = "ollama";
+    cfg.authMethod = "api_key"; // n/a for local — kept for config shape
+    cfg.ollamaHost = await ask(
+      p.text({
+        message: "Ollama host",
+        initialValue: cfg.ollamaHost ?? DEFAULT_OLLAMA_HOST,
+      }),
+    );
+    cfg.model = await ask(
+      p.text({
+        message: "Ollama model (needs tool calling — llama3.1, qwen2.5…)",
+        initialValue: cfg.model.startsWith("claude-") ? DEFAULT_OLLAMA_MODEL : cfg.model,
+      }),
+    );
+    saveConfig(cfg);
+    p.outro(pc.dim("Ready. Try:  ") + pc.cyan("valentine acme.com"));
+    return;
+  }
   cfg.provider = "anthropic";
 
   cfg.model = await ask(
@@ -158,12 +217,12 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
 }
 
 async function runLookup(cfg: Config, target: string, json: boolean): Promise<void> {
-  if (!crmKey(cfg) || !cfg.anthropicKey) {
+  if (!crmKey(cfg) || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
     // Don't launch an interactive wizard at an agent or a pipe — fail loud.
     if (json || isHeadless(process.argv.slice(2)))
       bail(
-        "Not configured. Set VALENTINE_ATTIO_KEY (or VALENTINE_AFFINITY_KEY) and " +
-          "ANTHROPIC_API_KEY, or run `valentine init`.",
+        "Not configured. Set VALENTINE_ATTIO_KEY (or VALENTINE_AFFINITY_KEY / " +
+          "VALENTINE_SALESFORCE_KEY) and ANTHROPIC_API_KEY, or run `valentine init`.",
       );
     await runInit(cfg);
   }
@@ -201,16 +260,20 @@ function printHelp(): void {
       `  ${pc.cyan("valentine <domain|name>")}     sweep the fund's memory before a call\n` +
       `  ${pc.cyan("valentine init")}              connect your CRM + choose a model\n` +
       `  ${pc.cyan("valentine mcp")}               run as an MCP server (Claude, Cursor…)\n` +
+      `  ${pc.cyan("valentine slack")}             serve the /valentine slash command\n` +
       `  ${pc.cyan("valentine watch")}             pre-meeting heads-up (coming soon)\n\n` +
       "Flags:\n" +
       "  --json              machine-readable verdict\n" +
       "  --non-interactive   never prompt — for agents & scripts (alias -y)\n" +
-      "  --crm <attio|affinity> --crm-key <k> --anthropic-key <k> --model <m>\n" +
+      "  --crm <attio|affinity|salesforce> --crm-key <k> --instance-url <url>\n" +
+      "  --provider <anthropic|ollama> --ollama-host <url> --anthropic-key <k> --model <m>\n" +
       "                      headless `init` inputs (or use env vars below)\n" +
+      "  --port <n>          `slack` server port (default 3141)\n" +
       "  --version           print version\n" +
       "  --help              this help\n\n" +
       pc.dim(
-        "Env: VALENTINE_ATTIO_KEY · VALENTINE_AFFINITY_KEY · ANTHROPIC_API_KEY · VALENTINE_MODEL\n" +
+        "Env: VALENTINE_ATTIO_KEY · VALENTINE_AFFINITY_KEY · VALENTINE_SALESFORCE_KEY (+_INSTANCE_URL)\n" +
+          "     ANTHROPIC_API_KEY · OLLAMA_HOST · VALENTINE_MODEL · VALENTINE_SLACK_SIGNING_SECRET\n" +
           "Agents: see AGENTS.md, or run the MCP server with `valentine mcp`.\n" +
           "Exit codes: 0 clean · 10 prior contact · 20 ambiguous · 1 error",
       ),
@@ -228,6 +291,7 @@ async function main(): Promise<void> {
   if (cmd === "help" || args.includes("--help")) return printHelp();
   if (cmd === "init") return runInit(cfg, args);
   if (cmd === "mcp") return void (await import("./mcp.js")).runMcpServer();
+  if (cmd === "slack") return void (await import("./slack.js")).runSlack(cfg, args);
   if (cmd === "watch") return watch();
   if (!cmd) return printHelp();
 

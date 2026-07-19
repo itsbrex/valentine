@@ -5,10 +5,18 @@ import type { Config } from "../config.js";
 import type { CRMConnector } from "./types.js";
 import { AttioConnector } from "./attio.js";
 import { AffinityConnector } from "./affinity.js";
+import { SalesforceConnector } from "./salesforce.js";
 
 /** The key the chosen CRM needs, if any. */
 export function crmKey(cfg: Config): string | undefined {
-  return cfg.crm === "affinity" ? cfg.affinityKey : cfg.attioKey;
+  switch (cfg.crm) {
+    case "affinity":
+      return cfg.affinityKey;
+    case "salesforce":
+      return cfg.salesforceKey;
+    default:
+      return cfg.attioKey;
+  }
 }
 
 export function makeConnector(cfg: Config): CRMConnector {
@@ -17,6 +25,12 @@ export function makeConnector(cfg: Config): CRMConnector {
   switch (cfg.crm) {
     case "affinity":
       return new AffinityConnector(key);
+    case "salesforce":
+      if (!cfg.salesforceInstanceUrl)
+        throw new Error(
+          "Salesforce needs an instance URL — set VALENTINE_SALESFORCE_INSTANCE_URL or run `valentine init`.",
+        );
+      return new SalesforceConnector(key, cfg.salesforceInstanceUrl);
     case "attio":
       return new AttioConnector(key);
     default:

@@ -55,10 +55,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (!target) throw new Error("`target` is required (a domain or a name).");
 
   const cfg = loadConfig();
-  if (!crmKey(cfg) || !cfg.anthropicKey)
+  if (!crmKey(cfg) || (cfg.provider === "anthropic" && !cfg.anthropicKey))
     throw new Error(
-      "Valentine is not configured. Set VALENTINE_ATTIO_KEY (or VALENTINE_AFFINITY_KEY) " +
-        "and ANTHROPIC_API_KEY in the server environment, or run `valentine init`.",
+      "Valentine is not configured. Set a CRM key (VALENTINE_ATTIO_KEY / VALENTINE_AFFINITY_KEY / " +
+        "VALENTINE_SALESFORCE_KEY + _INSTANCE_URL) and ANTHROPIC_API_KEY (or provider ollama) " +
+        "in the server environment, or run `valentine init`.",
     );
 
   const verdict = await lookup(makeClient(cfg), cfg.model, makeConnector(cfg), target);
