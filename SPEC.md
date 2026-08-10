@@ -127,9 +127,12 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
   the sweep never leaves the machine). AWS Bedrock / GCP Vertex: not yet wired.
 - **Cost:** a sweep is a few short tool round-trips + a one-line answer — roughly a
   cent or two on Sonnet, near-zero on Haiku, free on Ollama. Haiku is the default.
-- **Subscription/OAuth:** a stubbed auth method, disabled with a clear message, in
-  anticipation of Anthropic's post-2026-06-15 third-party terms. Flippable in one
-  place (`src/auth.ts`) if/when those terms permit distribution.
+- **Subscription/OAuth:** a stubbed auth method, disabled with a clear message.
+  Anthropic's Consumer Terms restrict Pro/Max OAuth tokens to Anthropic's own
+  products (Claude.ai, Claude Code); enforcement began in January 2026 and was
+  completed by April 2026, when subscriptions stopped covering third-party
+  harnesses outright. Flippable in one place (`src/auth.ts`) in the unlikely
+  event the terms change.
 
 ## 11. Output
 

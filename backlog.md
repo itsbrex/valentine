@@ -53,4 +53,6 @@ Caveats to resolve later:
 - AWS Bedrock provider (listed in `init`, disabled until wired).
 - Salesforce token refresh (connected-app OAuth) — v1 takes a session access
   token that expires.
-- Subscription auth, if/when Anthropic's third-party terms allow (P4).
+- Subscription auth (P4) — parked indefinitely. Anthropic restricts Pro/Max
+  OAuth to its own products; enforced fully since April 2026. Stub stays in
+  `src/auth.ts` should that ever reverse.

@@ -198,14 +198,14 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
       message: "Authentication",
       options: [
         { value: "api_key", label: "Anthropic API key", hint: "~a cent per sweep" },
-        { value: "subscription", label: "Claude Pro/Max subscription", hint: "not yet allowed for third-party tools" },
+        { value: "subscription", label: "Claude Pro/Max subscription", hint: "not allowed for third-party tools" },
       ],
       initialValue: "api_key",
     }),
   );
   if (auth === "subscription") {
     p.log.warn(
-      "Anthropic doesn't permit third-party tools to use Pro/Max subscriptions yet — using an API key instead.",
+      "Anthropic restricts Pro/Max subscriptions to its own products (enforced since early 2026) — using an API key instead.",
     );
   }
   cfg.authMethod = "api_key";
