@@ -306,7 +306,7 @@ function printHelp(): void {
       "  --provider <anthropic|ollama> --ollama-host <url> --anthropic-key <k> --model <m>\n" +
       "                      headless `init` inputs (or use env vars below)\n" +
       "  --port <n>          `slack` server port (default 3141)\n" +
-      "  --once --lead <min> --interval <min> --notify <macos|fullscreen|stdout>\n" +
+      "  --once --lead <min> --interval <min> --notify <macos|fullscreen|stdout|slack>\n" +
       "                      `watch` options (defaults: 30 min lead, 5 min poll, macos)\n" +
       "  --version           print version\n" +
       "  --help              this help\n\n" +

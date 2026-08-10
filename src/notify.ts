@@ -5,6 +5,11 @@
 //   fullscreen — an unmissable InYourFace-style takeover: a magenta window at
 //                screen size for a few seconds. For people who ignore banners.
 //   stdout     — plain lines, for pipes/tmux/logs. Works on any OS.
+//   slack      — a DM via the Slack Web API. The one channel that needs a
+//                token: VALENTINE_SLACK_BOT_TOKEN (bot, scopes chat:write +
+//                im:write) and VALENTINE_SLACK_DM_USER (your member ID).
+//                Deliberately separate from `valentine slack`, which stays
+//                signing-secret-only and cannot post on its own.
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -12,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const run = promisify(execFile);
 
-export type NotifyChannel = "macos" | "fullscreen" | "stdout";
+export type NotifyChannel = "macos" | "fullscreen" | "stdout" | "slack";
 
 const ICON = fileURLToPath(new URL("../assets/valentine.png", import.meta.url));
 
@@ -67,7 +72,34 @@ async function fullscreen(title: string, body: string): Promise<void> {
   await run("osascript", ["-l", "JavaScript", "-e", FULLSCREEN_JXA, title, body, "12"]);
 }
 
+async function slackApi(token: string, method: string, payload: unknown): Promise<any> {
+  const res = await fetch(`https://slack.com/api/${method}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!data?.ok) throw new Error(`Slack ${method}: ${data?.error ?? `HTTP ${res.status}`}`);
+  return data;
+}
+
+async function slackDm(title: string, body: string): Promise<void> {
+  const token = process.env.VALENTINE_SLACK_BOT_TOKEN;
+  const user = process.env.VALENTINE_SLACK_DM_USER;
+  if (!token || !user)
+    throw new Error(
+      "Slack DM notify needs VALENTINE_SLACK_BOT_TOKEN (bot token, scopes chat:write + im:write) " +
+        "and VALENTINE_SLACK_DM_USER (your member ID, U…).",
+    );
+  const open = await slackApi(token, "conversations.open", { users: user });
+  await slackApi(token, "chat.postMessage", {
+    channel: open.channel.id,
+    text: `✦ ${title}\n${body}`,
+  });
+}
+
 export async function notify(channel: NotifyChannel, title: string, body: string): Promise<void> {
+  if (channel === "slack") return slackDm(title, body);
   if (channel === "stdout" || process.platform !== "darwin") {
     console.log(`✦ ${title}\n${body.replace(/^/gm, "  ")}`);
     return;

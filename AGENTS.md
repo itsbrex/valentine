@@ -19,6 +19,8 @@ verdict. It never writes, sends, or moves anything.
 | `OLLAMA_HOST` | no | Ollama provider only. Defaults to `http://127.0.0.1:11434`. |
 | `VALENTINE_SLACK_SIGNING_SECRET` | for `valentine slack` | Slack app signing secret. Falls back to `SLACK_SIGNING_SECRET`. |
 | `VALENTINE_SLACK_PORT` | no | Port for `valentine slack` (or `--port`). Defaults to `3141`. |
+| `VALENTINE_SLACK_BOT_TOKEN` | for `watch --notify slack` | Bot token (scopes `chat:write` + `im:write`) for the DM notifier. |
+| `VALENTINE_SLACK_DM_USER` | for `watch --notify slack` | Member ID (`U…`) the heads-up DMs go to. |
 
 Set `ANTHROPIC_API_KEY` plus exactly one CRM key. Which CRM and which model
 provider are *choices*, not secrets — they live in `~/.valentine/config.json`

@@ -18,12 +18,12 @@ Decisions made (recorded for transparency):
 - **Notification channels shipped**: `macos` banner (terminal-notifier with the
   Valentine heart icon in `assets/valentine.png` when installed, AppleScript
   fallback), `fullscreen` (InYourFace-style magenta takeover), `stdout`.
-- **Slack DM notifier — planned, not shipped.** Needs a bot token
-  (`chat.postMessage` + a DM channel open), which the signing-secret-only
-  `valentine slack` design deliberately avoids. Plan: optional
-  `VALENTINE_SLACK_BOT_TOKEN` + `VALENTINE_SLACK_DM_USER`; when set, watch
-  posts the same verdict lines via the Slack Web API as a fourth `--notify`
-  channel. Keep the slash-command server token-free.
+- **Slack DM notifier — SHIPPED 2026-08** as the fourth `--notify` channel:
+  `watch --notify slack` opens a DM (`conversations.open`) and posts the
+  verdict lines (`chat.postMessage`) using `VALENTINE_SLACK_BOT_TOKEN`
+  (scopes `chat:write` + `im:write`) + `VALENTINE_SLACK_DM_USER`. The
+  slash-command server stays signing-secret-only and token-free — the two
+  Slack surfaces are deliberately separate apps/credentials.
 - **The Google-specific prep-event / `extendedProperties.private` design below
   stays parked** — it only applies if a Google Calendar source ever lands.
   With the macOS source, notifications replace calendar writes entirely, which

@@ -406,13 +406,12 @@ valentine watch --notify fullscreen # unmissable full-screen takeover
 valentine watch --lead 45 --interval 10 --notify stdout</code></pre>
     <ul class="bul">
       <li><b>Calendar source: the macOS Calendar app</b> (EventKit). Anything the Calendar app syncs is visible — iCloud, Google, and notably <b>Outlook / Microsoft&nbsp;365</b> added under System Settings → Internet Accounts → Microsoft Exchange. That's the cheap workaround when you can't get Graph API admin consent: if the Mac Calendar shows the meeting, Valentine sees it. First run asks for Calendars permission (grant it to your terminal app). The calendar layer is provider-agnostic (<code>src/calendar/types.ts</code>) — Google-API and .ics sources are one file away.</li>
-      <li><b>Notify channels</b>: <code>macos</code> (banner; uses <code>terminal-notifier</code> with the Valentine icon when installed, else an AppleScript notification), <code>fullscreen</code> (an InYourFace-style magenta takeover for people who ignore banners), <code>stdout</code> (pipes, tmux, logs).</li>
+      <li><b>Notify channels</b>: <code>macos</code> (banner; uses <code>terminal-notifier</code> with the Valentine icon when installed, else an AppleScript notification), <code>fullscreen</code> (an InYourFace-style magenta takeover for people who ignore banners), <code>stdout</code> (pipes, tmux, logs), and <code>slack</code> (a DM via <code>VALENTINE_SLACK_BOT_TOKEN</code> + <code>VALENTINE_SLACK_DM_USER</code> — the only channel needing a token; the slash-command server stays signing-secret-only).</li>
       <li><b>Read-only, still.</b> The calendar is only queried; the CRM connector contract has no write methods. Freemail attendees (gmail.com…) are swept by name, not domain; your own side is excluded automatically.</li>
     </ul>
 
     <h2 id="roadmap">Roadmap</h2>
     <ul class="bul">
-      <li><b>Slack DM notifier for <code>watch</code></b> — needs a bot token on top of the current signing-secret-only design; planned (see <code>backlog.md</code>).</li>
       <li><b>More CRMs</b> — a HubSpot connector.</li>
       <li><b>AWS Bedrock</b> — listed in the provider registry, disabled until wired.</li>
       <li><b>Salesforce connected-app OAuth</b> — the production auth path. Shipped meanwhile: <code>salesforceSidCommand</code> — configure any command that prints a fresh token (e.g. a browser-session extractor) and the connector self-refreshes on 401; see <code>backlog.md</code>.</li>

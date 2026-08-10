@@ -6,7 +6,7 @@
 //   valentine watch --once              single pass (cron/launchd-friendly)
 //   valentine watch --lead 45           heads-up window in minutes
 //   valentine watch --interval 10       poll cadence in minutes
-//   valentine watch --notify fullscreen macos (default) | fullscreen | stdout
+//   valentine watch --notify fullscreen macos (default) | fullscreen | stdout | slack
 //
 // Calendar layer is provider-agnostic (CalendarSource); macOS Calendar is the
 // wired source, which covers Outlook/M365 via Internet Accounts with no Graph
