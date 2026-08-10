@@ -18,6 +18,9 @@ export interface Config {
   affinityKey?: string;
   salesforceKey?: string;
   salesforceInstanceUrl?: string;
+  /** Shell command that prints a fresh Salesforce access token (e.g. a browser
+   *  sid extractor). Used instead of a static key; re-run on 401. Not a secret. */
+  salesforceSidCommand?: string;
   provider: "anthropic" | "ollama";
   model: string;
   authMethod: "api_key" | "subscription";
@@ -51,6 +54,7 @@ export function loadConfig(): Config {
   fill("affinityKey", process.env.VALENTINE_AFFINITY_KEY);
   fill("salesforceKey", process.env.VALENTINE_SALESFORCE_KEY);
   fill("salesforceInstanceUrl", process.env.VALENTINE_SALESFORCE_INSTANCE_URL);
+  fill("salesforceSidCommand", process.env.VALENTINE_SALESFORCE_SID_COMMAND);
   fill("anthropicKey", process.env.ANTHROPIC_API_KEY);
   fill("ollamaHost", process.env.VALENTINE_OLLAMA_HOST ?? process.env.OLLAMA_HOST);
   fill(

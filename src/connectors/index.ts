@@ -7,13 +7,14 @@ import { AttioConnector } from "./attio.js";
 import { AffinityConnector } from "./affinity.js";
 import { SalesforceConnector } from "./salesforce.js";
 
-/** The key the chosen CRM needs, if any. */
+/** The credential the chosen CRM needs, if any. For Salesforce a sid command
+ *  counts — the connector mints tokens from it on demand. */
 export function crmKey(cfg: Config): string | undefined {
   switch (cfg.crm) {
     case "affinity":
       return cfg.affinityKey;
     case "salesforce":
-      return cfg.salesforceKey;
+      return cfg.salesforceKey ?? cfg.salesforceSidCommand;
     default:
       return cfg.attioKey;
   }
@@ -30,7 +31,10 @@ export function makeConnector(cfg: Config): CRMConnector {
         throw new Error(
           "Salesforce needs an instance URL — set VALENTINE_SALESFORCE_INSTANCE_URL or run `valentine init`.",
         );
-      return new SalesforceConnector(key, cfg.salesforceInstanceUrl);
+      return new SalesforceConnector(
+        { token: cfg.salesforceKey, command: cfg.salesforceSidCommand },
+        cfg.salesforceInstanceUrl,
+      );
     case "attio":
       return new AttioConnector(key);
     default:

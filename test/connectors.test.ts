@@ -5,6 +5,9 @@
 
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AttioConnector } from "../src/connectors/attio.js";
 import { AffinityConnector } from "../src/connectors/affinity.js";
 import { SalesforceConnector } from "../src/connectors/salesforce.js";
@@ -234,6 +237,38 @@ test("Salesforce: getContext folds Notes + Task subjects, Opportunities, Contact
     lists: [{ list: "Opportunity: Acme Seed", stage: "Closed Lost" }],
     people: ["Jane Founder"],
   });
+});
+
+// A sid command with an on-disk counter: prints tok1, tok2, … per invocation.
+function countingSidCommand() {
+  const file = join(mkdtempSync(join(tmpdir(), "valentine-sid-")), "count");
+  const cmd = `n=$(($(cat "${file}" 2>/dev/null || echo 0)+1)); echo $n > "${file}"; printf tok$n`;
+  return { cmd, runs: () => Number(readFileSync(file, "utf8").trim()) };
+}
+
+test("Salesforce: sid command mints the token lazily and reuses it across calls", async () => {
+  const sid = countingSidCommand();
+  mockFetch(() => ({ records: [] }));
+  const conn = new SalesforceConnector({ command: sid.cmd }, "https://org.my.salesforce.com");
+  await conn.search({ object: "people", name: "Ann" });
+  await conn.search({ object: "people", name: "Bob" });
+  const auths = calls.map((c) => (c.init?.headers as Record<string, string>).Authorization);
+  assert.deepEqual(auths, ["Bearer tok1", "Bearer tok1"]); // one mint, reused
+  assert.equal(sid.runs(), 1);
+});
+
+test("Salesforce: a 401 re-runs the sid command once and retries the query", async () => {
+  const sid = countingSidCommand();
+  let hits = 0;
+  mockFetch(() => (++hits === 1
+    ? new Response("Session expired or invalid", { status: 401 })
+    : { records: [{ Id: "003X", Name: "Jane Founder" }] }));
+  const conn = new SalesforceConnector({ command: sid.cmd }, "https://org.my.salesforce.com");
+  const out = await conn.search({ object: "people", name: "Jane" });
+  assert.equal(out.length, 1); // retry succeeded — no degrade-to-empty
+  const auths = calls.map((c) => (c.init?.headers as Record<string, string>).Authorization);
+  assert.deepEqual(auths, ["Bearer tok1", "Bearer tok2"]); // fresh token on retry
+  assert.equal(sid.runs(), 2);
 });
 
 // ─── Affinity ────────────────────────────────────────────────────────────────

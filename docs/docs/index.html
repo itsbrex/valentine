@@ -415,7 +415,7 @@ valentine watch --lead 45 --interval 10 --notify stdout</code></pre>
       <li><b>Slack DM notifier for <code>watch</code></b> — needs a bot token on top of the current signing-secret-only design; planned (see <code>backlog.md</code>).</li>
       <li><b>More CRMs</b> — a HubSpot connector.</li>
       <li><b>AWS Bedrock</b> — listed in the provider registry, disabled until wired.</li>
-      <li><b>Salesforce token refresh</b> — connected-app OAuth instead of session tokens; a browser-session workaround is documented in <code>backlog.md</code>.</li>
+      <li><b>Salesforce connected-app OAuth</b> — the production auth path. Shipped meanwhile: <code>salesforceSidCommand</code> — configure any command that prints a fresh token (e.g. a browser-session extractor) and the connector self-refreshes on 401; see <code>backlog.md</code>.</li>
     </ul>
     <p class="muted">Recently shipped: <code>valentine watch</code>, the Salesforce connector, the local Ollama provider, and the <code>/valentine</code> Slack command. Deliberately skipped for now: Google Calendar / Gmail integrations and HubSpot — none are in use here; the connector and calendar interfaces are where they'd plug in.</p>
 

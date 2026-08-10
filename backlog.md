@@ -104,18 +104,24 @@ VALENTINE_SALESFORCE_INSTANCE_URL=https://yourorg.my.salesforce.com \
 valentine acme.com
 ```
 
-**Integration plan (fixture it into the connector):**
+**Integration — SHIPPED 2026-08 (steps 1–3), docs here are step 4:**
 
-1. Add an optional `salesforceSidCommand` config value — a shell command that
-   prints a fresh access token (the one-liner above, or anything else).
-2. `SalesforceConnector` runs it lazily on construction when no static key is
-   set, and re-runs it once on a 401/`INVALID_SESSION_ID` before failing —
-   mirroring the wrapper's per-call-refresh + retry design.
-3. `valentine init --crm salesforce` offers "browser session (macOS)" as an
-   auth choice and writes the command into config instead of a token, so no
-   secret ever lands in `~/.valentine/config.json`.
-4. Document the Keychain "Always Allow" prompt and the org IP-lock caveat
-   (orgs with session-IP pinning need real connected-app OAuth instead).
+1. ~~Optional `salesforceSidCommand` config value~~ — shipped: config field +
+   `VALENTINE_SALESFORCE_SID_COMMAND` env + `init --sid-command` flag. Any
+   shell command that prints a fresh access token (the one-liner above works).
+2. ~~Lazy mint + 401 retry~~ — shipped: the connector runs the command on
+   first use, caches the token, and on a 401 re-runs it once and retries the
+   query — mirroring the wrapper's per-call-refresh design. Covered by tests
+   (counter-command fixture asserts one mint, reuse, and the 401 re-mint).
+3. ~~`valentine init` "browser session (macOS)" choice~~ — shipped: Salesforce
+   auth select in init; the command is stored in config instead of a token, so
+   no secret ever lands in `~/.valentine/config.json`.
+4. Caveats (the docs step): the first cookie read triggers a macOS Keychain
+   prompt — click **Always Allow**. Orgs with "lock sessions to the IP address
+   from which they originated" reject browser sids — use real connected-app
+   OAuth there. And the browser must hold a LIVE session: the extractor
+   returns whatever cookie exists, so if you've been logged out server-side,
+   every mint 401s until you sign back in.
 
 Keeps Valentine dependency-free: the Python package stays external; the
 connector only shells out to a user-configured command.

@@ -67,6 +67,7 @@ function runInitHeadless(cfg: Config, args: string[]): void {
     else cfg.attioKey = key;
   }
   cfg.salesforceInstanceUrl = getFlag(args, "instance-url") ?? cfg.salesforceInstanceUrl;
+  cfg.salesforceSidCommand = getFlag(args, "sid-command") ?? cfg.salesforceSidCommand;
 
   const provider = (getFlag(args, "provider") as Config["provider"]) || cfg.provider;
   if (provider !== "anthropic" && provider !== "ollama")
@@ -84,7 +85,10 @@ function runInitHeadless(cfg: Config, args: string[]): void {
   }
 
   if (!crmKey(cfg))
-    bail(`No ${crm} key. Pass --crm-key or set VALENTINE_${crm.toUpperCase()}_KEY.`);
+    bail(
+      `No ${crm} key. Pass --crm-key or set VALENTINE_${crm.toUpperCase()}_KEY` +
+        (crm === "salesforce" ? " (or --sid-command / VALENTINE_SALESFORCE_SID_COMMAND)." : "."),
+    );
   if (crm === "salesforce" && !cfg.salesforceInstanceUrl)
     bail("Salesforce needs --instance-url or VALENTINE_SALESFORCE_INSTANCE_URL.");
   if (provider === "anthropic" && !cfg.anthropicKey)
@@ -116,19 +120,6 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
   cfg.crm = crm as Config["crm"];
 
   const crmLabel = { attio: "Attio", affinity: "Affinity", salesforce: "Salesforce" }[cfg.crm];
-  const key = await ask(
-    p.password({
-      message:
-        cfg.crm === "salesforce"
-          ? "Salesforce access token (a read-only user's is fine — try `sf org display --json`)"
-          : `${crmLabel} API key (read-only is fine)`,
-      validate: (v) => (v.length < 10 ? "That doesn't look like a key" : undefined),
-    }),
-  );
-  if (cfg.crm === "affinity") cfg.affinityKey = key;
-  else if (cfg.crm === "salesforce") cfg.salesforceKey = key;
-  else cfg.attioKey = key;
-
   if (cfg.crm === "salesforce") {
     cfg.salesforceInstanceUrl = await ask(
       p.text({
@@ -138,6 +129,51 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
         validate: (v) => (v.startsWith("https://") ? undefined : "Must be an https:// URL"),
       }),
     );
+    const sfAuth = await ask(
+      p.select({
+        message: "Salesforce auth",
+        options: [
+          {
+            value: "browser",
+            label: "Browser session (macOS)",
+            hint: "self-refreshing — a command mints tokens from your logged-in browser",
+          },
+          {
+            value: "token",
+            label: "Access token",
+            hint: "`sf org display --json` · expires with the session",
+          },
+        ],
+        initialValue: cfg.salesforceSidCommand ? "browser" : "token",
+      }),
+    );
+    if (sfAuth === "browser") {
+      // Stored as a command, not a secret — no token ever lands in config.json.
+      cfg.salesforceSidCommand = await ask(
+        p.text({
+          message: "Command that prints a fresh access token (see backlog.md for a working one-liner)",
+          initialValue: cfg.salesforceSidCommand ?? "",
+          validate: (v) => (v.trim() ? undefined : "Enter a command — e.g. the salesforce-mcp-auto-auth-chrome one-liner"),
+        }),
+      );
+      cfg.salesforceKey = undefined;
+    } else {
+      cfg.salesforceKey = await ask(
+        p.password({
+          message: "Salesforce access token (a read-only user's is fine — try `sf org display --json`)",
+          validate: (v) => (v.length < 10 ? "That doesn't look like a key" : undefined),
+        }),
+      );
+    }
+  } else {
+    const key = await ask(
+      p.password({
+        message: `${crmLabel} API key (read-only is fine)`,
+        validate: (v) => (v.length < 10 ? "That doesn't look like a key" : undefined),
+      }),
+    );
+    if (cfg.crm === "affinity") cfg.affinityKey = key;
+    else cfg.attioKey = key;
   }
 
   const s = p.spinner();
@@ -266,6 +302,7 @@ function printHelp(): void {
       "  --json              machine-readable verdict\n" +
       "  --non-interactive   never prompt — for agents & scripts (alias -y)\n" +
       "  --crm <attio|affinity|salesforce> --crm-key <k> --instance-url <url>\n" +
+      "  --sid-command <cmd> Salesforce: command that prints a fresh token (self-refreshing)\n" +
       "  --provider <anthropic|ollama> --ollama-host <url> --anthropic-key <k> --model <m>\n" +
       "                      headless `init` inputs (or use env vars below)\n" +
       "  --port <n>          `slack` server port (default 3141)\n" +

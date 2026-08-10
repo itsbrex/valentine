@@ -7,27 +7,64 @@
 //
 // Auth: a REST access token + instance URL. Get one from a read-only user via a
 // connected app, or locally: `sf org display --json` → accessToken/instanceUrl.
-// Tokens expire with the Salesforce session — refresh is out of scope for v1.
+// Static tokens expire with the Salesforce session. Alternatively, configure a
+// sid command (config `salesforceSidCommand` / VALENTINE_SALESFORCE_SID_COMMAND):
+// any shell command that prints a fresh access token — e.g. a browser-session
+// extractor like salesforce-mcp-auto-auth-chrome (see backlog.md). The command
+// runs lazily on first use and once more on a 401/INVALID_SESSION_ID, so the
+// session self-refreshes as long as a browser tab stays logged in.
 // API ref: https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/
 
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import type { CRMConnector, CRMMatch, CRMContext, SearchQuery } from "./types.js";
 
+const run = promisify(exec);
 const API = "/services/data/v59.0";
+
+export interface SalesforceAuth {
+  /** Static access token. */
+  token?: string;
+  /** Shell command that prints a fresh access token; re-run on 401. */
+  command?: string;
+}
 
 export class SalesforceConnector implements CRMConnector {
   readonly name = "Salesforce";
+  private token?: string;
+  private readonly command?: string;
+  private instanceUrl: string;
 
-  constructor(
-    private accessToken: string,
-    private instanceUrl: string,
-  ) {
+  constructor(auth: string | SalesforceAuth, instanceUrl: string) {
+    if (typeof auth === "string") auth = { token: auth };
+    this.token = auth.token;
+    this.command = auth.command;
     this.instanceUrl = instanceUrl.replace(/\/+$/, "");
   }
 
+  private async accessToken(): Promise<string> {
+    if (this.token) return this.token;
+    if (!this.command)
+      throw new Error("No Salesforce token or sid command configured. Run `valentine init`.");
+    const { stdout } = await run(this.command, { timeout: 30_000 });
+    this.token = stdout.trim().split("\n").pop() || undefined;
+    if (!this.token)
+      throw new Error("Salesforce sid command printed nothing — is the browser logged in?");
+    return this.token;
+  }
+
   private async soql(q: string): Promise<any[]> {
-    const res = await fetch(`${this.instanceUrl}${API}/query?q=${encodeURIComponent(q)}`, {
-      headers: { Authorization: `Bearer ${this.accessToken}` },
+    const url = `${this.instanceUrl}${API}/query?q=${encodeURIComponent(q)}`;
+    let res = await fetch(url, {
+      headers: { Authorization: `Bearer ${await this.accessToken()}` },
     });
+    // Session expired and we can mint a fresh one → re-run the command, retry once.
+    if (res.status === 401 && this.command) {
+      this.token = undefined;
+      res = await fetch(url, {
+        headers: { Authorization: `Bearer ${await this.accessToken()}` },
+      });
+    }
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`Salesforce ${res.status} on query: ${body.slice(0, 200)}`);
