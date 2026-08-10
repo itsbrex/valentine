@@ -15,6 +15,9 @@ const FILE = join(DIR, "config.json");
 export type CrmId = "attio" | "affinity" | "salesforce";
 export const CRM_IDS: readonly CrmId[] = ["attio", "affinity", "salesforce"];
 
+/** Quantizations published in LiquidAI/LFM2.5-2.6B-ONNX. */
+export type OnnxDtype = "q4" | "q4f16" | "fp16" | "q8";
+
 export interface Config {
   crm: CrmId;
   /** Ordered list of CRMs to sweep — first is primary. Absent → just `crm`.
@@ -28,11 +31,13 @@ export interface Config {
   /** Shell command that prints a fresh Salesforce access token (e.g. a browser
    *  sid extractor). Used instead of a static key; re-run on 401. Not a secret. */
   salesforceSidCommand?: string;
-  provider: "anthropic" | "ollama";
+  provider: "anthropic" | "ollama" | "onnx";
   model: string;
   authMethod: "api_key" | "subscription";
   anthropicKey?: string;
   ollamaHost?: string;
+  /** ONNX quantization — q4 (~1.9 GB) unless overridden. */
+  onnxDtype?: OnnxDtype;
   slackSigningSecret?: string;
 }
 

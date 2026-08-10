@@ -1,10 +1,11 @@
 // Local models via Ollama — an adapter that speaks the same tiny "messages"
 // surface as the Anthropic client (ModelClient), translated to Ollama's native
-// /api/chat. Requires a tool-calling model: llama3.1, qwen2.5, mistral-nemo….
-// Everything stays on your machine — CRM data never leaves localhost.
+// /api/chat. Requires a tool-calling model — LFM2.5 (default), llama3.1,
+// qwen2.5…. Everything stays on your machine — CRM data never leaves localhost.
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelClient } from "./models.js";
+import { stripThink, parseLfmToolCalls } from "./lfm.js";
 
 export class OllamaClient implements ModelClient {
   /** Ollama doesn't issue tool-call ids; mint stable local ones. */
@@ -22,36 +23,48 @@ export class OllamaClient implements ModelClient {
       tools: unknown;
       messages: Anthropic.MessageParam[];
     }): Promise<{ content: Anthropic.ContentBlock[] }> => {
-      const res = await fetch(`${this.host}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: req.model,
-          stream: false,
-          options: { num_predict: req.max_tokens },
-          tools: (req.tools as any[]).map((t) => ({
-            type: "function",
-            function: { name: t.name, description: t.description, parameters: t.input_schema },
-          })),
-          messages: toOllama(req.system, req.messages),
-        }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(
-          `Ollama ${res.status} at ${this.host}: ${text.slice(0, 200)} — ` +
-            "is `ollama serve` running and the model pulled?",
-        );
+      // Thinking models (LFM2.5…) occasionally burn a turn on reasoning alone:
+      // `thinking` set, content empty, no tool_calls. One retry recovers it.
+      for (let attempt = 0; ; attempt++) {
+        const res = await fetch(`${this.host}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: req.model,
+            stream: false,
+            options: { num_predict: req.max_tokens },
+            tools: (req.tools as any[]).map((t) => ({
+              type: "function",
+              function: { name: t.name, description: t.description, parameters: t.input_schema },
+            })),
+            messages: toOllama(req.system, req.messages),
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(
+            `Ollama ${res.status} at ${this.host}: ${text.slice(0, 200)} — ` +
+              "is `ollama serve` running and the model pulled?",
+          );
+        }
+        const data: any = await res.json();
+        const content = this.fromOllama(data?.message);
+        if (content.length === 0 && data?.message?.thinking && attempt === 0) continue;
+        return { content };
       }
-      const data: any = await res.json();
-      return { content: this.fromOllama(data?.message) };
     },
   };
 
-  /** Ollama response message → Anthropic-shaped content blocks. */
+  /** Ollama response message → Anthropic-shaped content blocks. LFM2.5 emits
+   *  <think> reasoning and sometimes raw <|tool_call_start|> markers in the
+   *  content when Ollama's template drops structured tool_calls
+   *  (ollama/ollama#15953) — strip the former, recover the latter. */
   private fromOllama(msg: any): Anthropic.ContentBlock[] {
     const blocks: any[] = [];
-    if (msg?.content) blocks.push({ type: "text", text: String(msg.content), citations: null });
+    const { text, calls } = parseLfmToolCalls(stripThink(String(msg?.content ?? "")));
+    if (text) blocks.push({ type: "text", text, citations: null });
+    for (const c of calls)
+      blocks.push({ type: "tool_use", id: `ollama_call_${++this.toolSeq}`, name: c.name, input: c.input });
     for (const c of msg?.tool_calls ?? []) {
       const fn = c?.function ?? {};
       const input = typeof fn.arguments === "string" ? parseArgs(fn.arguments) : (fn.arguments ?? {});

@@ -8,7 +8,15 @@
 
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { loadConfig, saveConfig, parseCrms, activeCrms, CRM_IDS, type Config } from "./config.js";
+import {
+  loadConfig,
+  saveConfig,
+  parseCrms,
+  activeCrms,
+  CRM_IDS,
+  type Config,
+  type OnnxDtype,
+} from "./config.js";
 import { makeConnector, crmKey, missingCrmCreds } from "./connectors/index.js";
 import { sweepAll, CRM_LABELS } from "./sweep.js";
 import {
@@ -18,6 +26,9 @@ import {
   DEFAULT_MODEL,
   DEFAULT_OLLAMA_HOST,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_ONNX_MODEL,
+  DEFAULT_ONNX_DTYPE,
+  ONNX_DTYPES,
 } from "./models.js";
 import { exitCodeFor, renderSweep, sweepToJson } from "./output.js";
 import { watch } from "./watch.js";
@@ -79,8 +90,8 @@ function runInitHeadless(cfg: Config, args: string[]): void {
   cfg.salesforceSidCommand = getFlag(args, "sid-command") ?? cfg.salesforceSidCommand;
 
   const provider = (getFlag(args, "provider") as Config["provider"]) || cfg.provider;
-  if (provider !== "anthropic" && provider !== "ollama")
-    bail(`--provider must be "anthropic" or "ollama"`);
+  if (provider !== "anthropic" && provider !== "ollama" && provider !== "onnx")
+    bail(`--provider must be "anthropic", "ollama", or "onnx"`);
   cfg.provider = provider;
   cfg.authMethod = "api_key";
 
@@ -89,8 +100,17 @@ function runInitHeadless(cfg: Config, args: string[]): void {
   cfg.anthropicKey = getFlag(args, "anthropic-key") ?? cfg.anthropicKey;
   if (provider === "ollama") {
     cfg.ollamaHost = getFlag(args, "ollama-host") ?? cfg.ollamaHost ?? DEFAULT_OLLAMA_HOST;
-    // A claude-* model id makes no sense against Ollama — swap in the local default.
+    // A claude-* model id makes no sense against a local provider — swap in the default.
     if (!model && cfg.model.startsWith("claude-")) cfg.model = DEFAULT_OLLAMA_MODEL;
+  }
+  if (provider === "onnx") {
+    const dtype = getFlag(args, "onnx-dtype");
+    if (dtype) {
+      if (!(ONNX_DTYPES as readonly string[]).includes(dtype))
+        bail(`--onnx-dtype must be one of: ${ONNX_DTYPES.join(", ")}`);
+      cfg.onnxDtype = dtype as OnnxDtype;
+    }
+    if (!model && cfg.model.startsWith("claude-")) cfg.model = DEFAULT_ONNX_MODEL;
   }
 
   const missing = missingCrmCreds(cfg);
@@ -238,9 +258,43 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
     );
     cfg.model = await ask(
       p.text({
-        message: "Ollama model (needs tool calling — llama3.1, qwen2.5…)",
+        message: "Ollama model (needs tool calling — LFM2.5 default, llama3.1, qwen2.5…)",
         initialValue: cfg.model.startsWith("claude-") ? DEFAULT_OLLAMA_MODEL : cfg.model,
       }),
+    );
+    p.note(
+      "One-time model pull:\n  ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M",
+      "Heads up",
+    );
+    saveConfig(cfg);
+    p.outro(pc.dim("Ready. Try:  ") + pc.cyan("valentine acme.com"));
+    return;
+  }
+  if (provider === "onnx") {
+    cfg.provider = "onnx";
+    cfg.authMethod = "api_key"; // n/a for local — kept for config shape
+    cfg.model = await ask(
+      p.text({
+        message: "ONNX model (Hugging Face repo)",
+        initialValue: cfg.model.startsWith("claude-") ? DEFAULT_ONNX_MODEL : cfg.model,
+      }),
+    );
+    cfg.onnxDtype = (await ask(
+      p.select({
+        message: "Quantization",
+        options: [
+          { value: "q4", label: "q4 — ~1.9 GB (recommended)" },
+          { value: "q4f16", label: "q4f16 — ~1.5 GB" },
+          { value: "fp16", label: "fp16 — ~2.1 GB" },
+          { value: "q8", label: "q8 — ~2.1 GB" },
+        ],
+        initialValue: (cfg.onnxDtype ?? DEFAULT_ONNX_DTYPE) as string,
+      }),
+    )) as OnnxDtype;
+    p.note(
+      "First run downloads the model to the Hugging Face cache and needs\n" +
+        "`npm i -g @huggingface/transformers` installed once.",
+      "Heads up",
     );
     saveConfig(cfg);
     p.outro(pc.dim("Ready. Try:  ") + pc.cyan("valentine acme.com"));

@@ -44,8 +44,9 @@ moves a deal. There are no write tools in the codebase, by design.
    HubSpot is one new file away.
 2. **An agent** (`src/agent.ts`) — the loop: model thinks → calls a read tool →
    gets the result → repeats → calls `submit_verdict`. ~40 lines, hand-rolled on
-   the Anthropic API so you can read every line. Runs on Anthropic models or a
-   local Ollama model (then nothing leaves your machine at all).
+   the Anthropic API so you can read every line. Runs on Anthropic models or
+   fully local ones — Ollama or in-process ONNX (then nothing leaves your
+   machine at all).
 3. **A trigger** (`src/cli.ts`) — the CLI, the MCP server, `valentine slack`
    (a `/valentine` slash command), and `valentine watch` — a pre-meeting
    heads-up that reads the macOS Calendar (including Outlook/M365 accounts
@@ -71,9 +72,23 @@ Valentine is built to be driven by other agents, not just typed by hand.
 Runs with your CRM token, on your machine. Nothing leaves the fund. Keys are
 stored locally at `~/.valentine/config.json` (or via env: `VALENTINE_ATTIO_KEY`,
 `VALENTINE_AFFINITY_KEY`, `VALENTINE_SALESFORCE_KEY` +
-`VALENTINE_SALESFORCE_INSTANCE_URL`, `ANTHROPIC_API_KEY`). Prefer a local model?
-Pick the Ollama provider in `valentine init` — no Anthropic key needed. See
-[`.env.example`](./.env.example) for the full list.
+`VALENTINE_SALESFORCE_INSTANCE_URL`, `ANTHROPIC_API_KEY`).
+
+Prefer a local model — and no Anthropic key at all? Two ways, both defaulting
+to [LFM2.5-2.6B](https://huggingface.co/LiquidAI/LFM2.5-2.6B), a free
+open-weights 2.6B model with best-in-class tool calling:
+
+- **Ollama** (recommended) — `ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M`
+  (~1.7 GB), then pick the Ollama provider in `valentine init`. Needs Ollama
+  ≥0.14 — older builds reject tool calling for this model.
+- **In-process ONNX** — no server at all. Install the runtime next to valentine
+  (`npm i -g @huggingface/transformers` if valentine is global, otherwise
+  `npm i @huggingface/transformers` in your project), then pick the ONNX
+  provider in `valentine init`. First run downloads ~1.9 GB to the Hugging Face
+  cache. Simplest to set up, but noticeably slower per step than Ollama, which
+  gets Metal/GPU acceleration — prefer Ollama if you have it.
+
+See [`.env.example`](./.env.example) for the full env-var list.
 
 ## Develop
 
