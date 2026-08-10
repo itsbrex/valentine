@@ -66,8 +66,21 @@ export async function sweepAll(
 ): Promise<SweepResult> {
   const sources: SourceVerdict[] = [];
   for (const crm of activeCrms(cfg)) {
-    const v = await lookup(client, cfg.model, makeConnector(cfg, crm), target);
-    sources.push({ crm, ...v });
+    try {
+      const v = await lookup(client, cfg.model, makeConnector(cfg, crm), target);
+      sources.push({ crm, ...v });
+    } catch (e: any) {
+      // One unreachable CRM must not sink the others — an expired Salesforce
+      // browser session shouldn't cost you the Attio answer 30 minutes before
+      // the meeting. Surfaced as ambiguous, never clean: a source we couldn't
+      // read is unknown, not safe.
+      sources.push({
+        verdict: "ambiguous",
+        summary: `Couldn't reach ${CRM_LABELS[crm]}: ${e?.message ?? e}`,
+        citations: [],
+        crm,
+      });
+    }
   }
   return { combined: combineVerdicts(sources), sources };
 }
