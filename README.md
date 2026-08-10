@@ -46,9 +46,11 @@ moves a deal. There are no write tools in the codebase, by design.
    gets the result → repeats → calls `submit_verdict`. ~40 lines, hand-rolled on
    the Anthropic API so you can read every line. Runs on Anthropic models or a
    local Ollama model (then nothing leaves your machine at all).
-3. **A trigger** (`src/cli.ts`) — the CLI, the MCP server, and `valentine slack`
-   (a `/valentine` slash command) today; `valentine watch` (calendar) on the
-   roadmap.
+3. **A trigger** (`src/cli.ts`) — the CLI, the MCP server, `valentine slack`
+   (a `/valentine` slash command), and `valentine watch` — a pre-meeting
+   heads-up that reads the macOS Calendar (including Outlook/M365 accounts
+   added via Internet Accounts) and notifies you 30 minutes before external
+   meetings.
 
 The rules it runs by live in `src/prompt.ts`. Full design in [`SPEC.md`](./SPEC.md).
 

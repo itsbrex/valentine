@@ -180,7 +180,7 @@ valentine "Jane Founder"</code></pre>
       <tr><td><code>valentine init</code></td><td>Connect a CRM and choose a model. Interactive, or headless with flags / a non-TTY.</td></tr>
       <tr><td><code>valentine mcp</code></td><td>Run as a stdio MCP server (see <a href="#mcp">MCP</a>).</td></tr>
       <tr><td><code>valentine slack</code></td><td>Serve the <code>/valentine</code> slash command for your Slack workspace (see <a href="#slack">Slack</a>).</td></tr>
-      <tr><td><code>valentine watch</code> <span class="pill soon">roadmap</span></td><td>Pre-meeting calendar heads-up. Prints the planned behaviour today.</td></tr>
+      <tr><td><code>valentine watch</code></td><td>Pre-meeting heads-up: reads the macOS Calendar (incl. Outlook via Internet Accounts), sweeps external attendee domains, notifies 30 min out. Flags: <code>--once</code>, <code>--lead</code>, <code>--interval</code>, <code>--notify macos|fullscreen|stdout</code>.</td></tr>
       <tr><td><code>valentine help</code></td><td>Print usage. Same as <code>--help</code> or no arguments.</td></tr>
       <tr><td><code>valentine version</code></td><td>Print the version. Same as <code>--version</code>.</td></tr>
     </table>
@@ -348,7 +348,7 @@ echo $?                                <span class="cm"># 0 / 10 / 20 / 1</span>
     <ul class="bul">
       <li><b>A connector</b> (<code>src/connectors/</code>) — read-only CRM access behind a small <code>CRMConnector</code> interface. Attio, Affinity, and Salesforce ship in the box; the interface has no mutating methods at all.</li>
       <li><b>An agent</b> (<code>src/agent.ts</code>) — the loop: the model thinks, calls a read tool, gets the result, repeats, then calls <code>submit_verdict</code>. Hand-rolled against a minimal <code>ModelClient</code> surface — the Anthropic client satisfies it directly, a small adapter (<code>src/ollama.ts</code>) maps local Ollama models onto it. Capped at 10 steps, so it stays tiny and auditable.</li>
-      <li><b>A trigger</b> (<code>src/cli.ts</code>) — the CLI, the MCP server, and the <a href="#slack">Slack slash command</a> today; <code>watch</code> on the roadmap.</li>
+      <li><b>A trigger</b> (<code>src/cli.ts</code>) — the CLI, the MCP server, the <a href="#slack">Slack slash command</a>, and <code>valentine watch</code>.</li>
     </ul>
     <p>The rules the agent runs by live in one file, <code>src/prompt.ts</code> — its system prompt. In short: read-only always; search companies (and people if implied); pull context on a promising match; weigh every signal; emit exactly one verdict and no prose around it.</p>
 
@@ -398,14 +398,26 @@ echo $?                                <span class="cm"># 0 / 10 / 20 / 1</span>
       <li><b>Subscription auth error.</b> Pro/Max subscriptions aren't allowed for third-party tools; choose an API key in <code>init</code>.</li>
     </ul>
 
+    <h2 id="watch">valentine watch</h2>
+    <p>The ambient trigger: <code>valentine watch</code> polls your calendar, finds external meetings starting within the lead window, sweeps each external attendee's domain with the same read-only agent, and notifies you — once per meeting.</p>
+    <pre><code>valentine watch                     # poll every 5 min, notify 30 min out
+valentine watch --once              # single pass — cron/launchd-friendly
+valentine watch --notify fullscreen # unmissable full-screen takeover
+valentine watch --lead 45 --interval 10 --notify stdout</code></pre>
+    <ul class="bul">
+      <li><b>Calendar source: the macOS Calendar app</b> (EventKit). Anything the Calendar app syncs is visible — iCloud, Google, and notably <b>Outlook / Microsoft&nbsp;365</b> added under System Settings → Internet Accounts → Microsoft Exchange. That's the cheap workaround when you can't get Graph API admin consent: if the Mac Calendar shows the meeting, Valentine sees it. First run asks for Calendars permission (grant it to your terminal app). The calendar layer is provider-agnostic (<code>src/calendar/types.ts</code>) — Google-API and .ics sources are one file away.</li>
+      <li><b>Notify channels</b>: <code>macos</code> (banner; uses <code>terminal-notifier</code> with the Valentine icon when installed, else an AppleScript notification), <code>fullscreen</code> (an InYourFace-style magenta takeover for people who ignore banners), <code>stdout</code> (pipes, tmux, logs).</li>
+      <li><b>Read-only, still.</b> The calendar is only queried; the CRM connector contract has no write methods. Freemail attendees (gmail.com…) are swept by name, not domain; your own side is excluded automatically.</li>
+    </ul>
+
     <h2 id="roadmap">Roadmap</h2>
     <ul class="bul">
-      <li><b><code>valentine watch</code></b> — read your calendar, resolve each external attendee's domain, sweep, and DM a one-line heads-up ~30 minutes before the meeting. The interface is stubbed; the command prints its planned behaviour today.</li>
+      <li><b>Slack DM notifier for <code>watch</code></b> — needs a bot token on top of the current signing-secret-only design; planned (see <code>backlog.md</code>).</li>
       <li><b>More CRMs</b> — a HubSpot connector.</li>
       <li><b>AWS Bedrock</b> — listed in the provider registry, disabled until wired.</li>
-      <li><b>Salesforce token refresh</b> — connected-app OAuth instead of session tokens.</li>
+      <li><b>Salesforce token refresh</b> — connected-app OAuth instead of session tokens; a browser-session workaround is documented in <code>backlog.md</code>.</li>
     </ul>
-    <p class="muted">Recently shipped: the Salesforce connector, the local Ollama provider, and the <code>/valentine</code> Slack command.</p>
+    <p class="muted">Recently shipped: <code>valentine watch</code>, the Salesforce connector, the local Ollama provider, and the <code>/valentine</code> Slack command. Deliberately skipped for now: Google Calendar / Gmail integrations and HubSpot — none are in use here; the connector and calendar interfaces are where they'd plug in.</p>
 
     <h2 id="develop">Develop</h2>
     <pre><code>git clone https://github.com/80x-djh/valentine

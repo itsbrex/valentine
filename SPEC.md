@@ -161,8 +161,8 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
 
 - **P0 (build now):** ~~CLI mode end-to-end, `init` with model/auth/CRM choice, Attio
   connector, verdict engine, `--json`, exit codes, error handling.~~ (done)
-- **P1:** `valentine watch` — read calendar, DM a heads-up 30 min before external
-  meetings (resolve attendee domains → sweep → notify).
+- **P1:** ~~`valentine watch`~~ (done 2026-08 — macOS Calendar/EventKit source,
+  incl. Outlook via Internet Accounts; macos/fullscreen/stdout notifiers).
 - **P2:** ~~Slack slash command for the whole partnership.~~ (done — `valentine slack`)
 - **P3:** ~~Affinity~~ (done) / ~~Salesforce~~ (done) / HubSpot connectors.
 - **P4 (revisit):** subscription auth, if/when terms allow. AWS Bedrock provider.
@@ -185,7 +185,9 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
   with the Salesforce session, so a refresh story (connected-app OAuth) is open.
 - Ollama verdict quality — small local models are noticeably weaker judges than
   Haiku on messy CRM data; worth a calibration pass and a recommended-models list.
-- `watch` notification channel — Slack DM, macOS notification, or email? (The
-  Slack signing-secret infra from `valentine slack` is reusable here.)
+- ~~`watch` notification channel~~ — resolved 2026-08: macOS notification
+  (banner via terminal-notifier/AppleScript) plus a full-screen takeover
+  option and stdout. A Slack DM channel is planned but needs a bot token the
+  signing-secret-only design avoids — see backlog.md.
 - ~~npm name~~ — resolved: published as `valentine-agent`.
 - ~~Domain~~ — resolved: `tryvalentine.com`.

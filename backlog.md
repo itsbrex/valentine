@@ -2,14 +2,33 @@
 
 Ideas parked for later. Not in scope for the current build.
 
-## Calendar integration (`valentine watch` — P1)
-Read the user's calendar, resolve each external attendee's email domain, run the
-read-only sweep, and surface a heads-up ~30 min before each external meeting.
-- Auth: Google Calendar OAuth (per-user, local).
-- Notification channel — open question: Slack DM vs macOS notification vs email.
-  (`valentine slack` now ships the signing-secret webhook infra; a DM notifier
-  would need a bot token on top.)
-- Must stay read-only on the CRM side (sweep only).
+## ~~Calendar integration (`valentine watch` — P1)~~ — SHIPPED 2026-08
+
+Decisions made (recorded for transparency):
+
+- **Calendar source: the macOS Calendar app via EventKit** (`src/calendar/macos.ts`),
+  not Google Calendar OAuth. Rationale: everything the Calendar app syncs comes
+  for free — including **Outlook/M365 added under System Settings → Internet
+  Accounts → Microsoft Exchange**, which sidesteps needing Graph API admin
+  consent entirely. Cheap, simple, documented in the docs page. The layer is
+  provider-agnostic (`src/calendar/types.ts`); Google-API and .ics sources are
+  one file each if ever needed.
+- **Deliberately skipped: Google Calendar / Gmail / HubSpot work** — not in
+  personal use here. The interfaces are where they'd plug in.
+- **Notification channels shipped**: `macos` banner (terminal-notifier with the
+  Valentine heart icon in `assets/valentine.png` when installed, AppleScript
+  fallback), `fullscreen` (InYourFace-style magenta takeover), `stdout`.
+- **Slack DM notifier — planned, not shipped.** Needs a bot token
+  (`chat.postMessage` + a DM channel open), which the signing-secret-only
+  `valentine slack` design deliberately avoids. Plan: optional
+  `VALENTINE_SLACK_BOT_TOKEN` + `VALENTINE_SLACK_DM_USER`; when set, watch
+  posts the same verdict lines via the Slack Web API as a fourth `--notify`
+  channel. Keep the slash-command server token-free.
+- **The Google-specific prep-event / `extendedProperties.private` design below
+  stays parked** — it only applies if a Google Calendar source ever lands.
+  With the macOS source, notifications replace calendar writes entirely, which
+  also keeps Valentine's zero-write story intact (watch state lives in
+  `~/.valentine/watch-state.json`, not on the calendar).
 
 ## Internal-only annotation on the calendar event (exploration)
 Goal: attach Valentine's synopsis to a meeting **without other guests seeing it.**

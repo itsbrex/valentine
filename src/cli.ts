@@ -261,7 +261,7 @@ function printHelp(): void {
       `  ${pc.cyan("valentine init")}              connect your CRM + choose a model\n` +
       `  ${pc.cyan("valentine mcp")}               run as an MCP server (Claude, Cursor…)\n` +
       `  ${pc.cyan("valentine slack")}             serve the /valentine slash command\n` +
-      `  ${pc.cyan("valentine watch")}             pre-meeting heads-up (coming soon)\n\n` +
+      `  ${pc.cyan("valentine watch")}             pre-meeting heads-up (macOS Calendar, incl. Outlook)\n\n` +
       "Flags:\n" +
       "  --json              machine-readable verdict\n" +
       "  --non-interactive   never prompt — for agents & scripts (alias -y)\n" +
@@ -269,6 +269,8 @@ function printHelp(): void {
       "  --provider <anthropic|ollama> --ollama-host <url> --anthropic-key <k> --model <m>\n" +
       "                      headless `init` inputs (or use env vars below)\n" +
       "  --port <n>          `slack` server port (default 3141)\n" +
+      "  --once --lead <min> --interval <min> --notify <macos|fullscreen|stdout>\n" +
+      "                      `watch` options (defaults: 30 min lead, 5 min poll, macos)\n" +
       "  --version           print version\n" +
       "  --help              this help\n\n" +
       pc.dim(
@@ -292,7 +294,7 @@ async function main(): Promise<void> {
   if (cmd === "init") return runInit(cfg, args);
   if (cmd === "mcp") return void (await import("./mcp.js")).runMcpServer();
   if (cmd === "slack") return void (await import("./slack.js")).runSlack(cfg, args);
-  if (cmd === "watch") return watch();
+  if (cmd === "watch") return watch(cfg, args);
   if (!cmd) return printHelp();
 
   await runLookup(cfg, cmd, json);
