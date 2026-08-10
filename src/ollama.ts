@@ -23,29 +23,35 @@ export class OllamaClient implements ModelClient {
       tools: unknown;
       messages: Anthropic.MessageParam[];
     }): Promise<{ content: Anthropic.ContentBlock[] }> => {
-      const res = await fetch(`${this.host}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: req.model,
-          stream: false,
-          options: { num_predict: req.max_tokens },
-          tools: (req.tools as any[]).map((t) => ({
-            type: "function",
-            function: { name: t.name, description: t.description, parameters: t.input_schema },
-          })),
-          messages: toOllama(req.system, req.messages),
-        }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(
-          `Ollama ${res.status} at ${this.host}: ${text.slice(0, 200)} — ` +
-            "is `ollama serve` running and the model pulled?",
-        );
+      // Thinking models (LFM2.5…) occasionally burn a turn on reasoning alone:
+      // `thinking` set, content empty, no tool_calls. One retry recovers it.
+      for (let attempt = 0; ; attempt++) {
+        const res = await fetch(`${this.host}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: req.model,
+            stream: false,
+            options: { num_predict: req.max_tokens },
+            tools: (req.tools as any[]).map((t) => ({
+              type: "function",
+              function: { name: t.name, description: t.description, parameters: t.input_schema },
+            })),
+            messages: toOllama(req.system, req.messages),
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(
+            `Ollama ${res.status} at ${this.host}: ${text.slice(0, 200)} — ` +
+              "is `ollama serve` running and the model pulled?",
+          );
+        }
+        const data: any = await res.json();
+        const content = this.fromOllama(data?.message);
+        if (content.length === 0 && data?.message?.thinking && attempt === 0) continue;
+        return { content };
       }
-      const data: any = await res.json();
-      return { content: this.fromOllama(data?.message) };
     },
   };
 

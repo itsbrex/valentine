@@ -7,11 +7,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OllamaClient } from "../src/ollama.js";
 
-function withFetch(payload: unknown, fn: () => Promise<void>) {
+function withFetch(payloads: unknown | unknown[], fn: (count: () => number) => Promise<void>) {
   const real = globalThis.fetch;
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
-  return fn().finally(() => {
+  const queue = Array.isArray(payloads) ? [...payloads] : [payloads];
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    const payload = queue.length > 1 ? queue.shift() : queue[0];
+    return new Response(JSON.stringify(payload), { status: 200 });
+  }) as typeof fetch;
+  return fn(() => calls).finally(() => {
     globalThis.fetch = real;
   });
 }
@@ -65,5 +70,36 @@ test("structured tool_calls still work, think stripped from prose", () =>
 test("think-only content with no calls yields no empty text block", () =>
   withFetch({ message: { content: "<think>nothing</think>" } }, async () => {
     const { content } = await new OllamaClient("http://localhost:11434").messages.create(req);
+    assert.deepEqual(content, []);
+  }));
+
+// LFM2.5 on Ollama ≥0.32 puts reasoning in a separate `thinking` field and
+// occasionally emits a degenerate turn: thinking present, content empty, no
+// tool_calls. Observed live (Salesforce sweep → "No verdict produced").
+test("degenerate thinking-only turn retries once and returns the good turn", () =>
+  withFetch(
+    [
+      { message: { thinking: "hmm, let me consider…", content: "" } },
+      {
+        message: {
+          content: "Found it.",
+          tool_calls: [{ function: { name: "search_crm", arguments: { domain: "acme.com" } } }],
+        },
+      },
+    ],
+    async (count) => {
+      const { content } = await new OllamaClient("http://localhost:11434").messages.create(req);
+      assert.equal(count(), 2);
+      assert.deepEqual(
+        content.map((b: { type: string }) => b.type),
+        ["text", "tool_use"],
+      );
+    },
+  ));
+
+test("empty turn without thinking is NOT retried (genuine empty answer)", () =>
+  withFetch({ message: { content: "" } }, async (count) => {
+    const { content } = await new OllamaClient("http://localhost:11434").messages.create(req);
+    assert.equal(count(), 1);
     assert.deepEqual(content, []);
   }));
