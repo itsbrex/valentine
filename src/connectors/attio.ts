@@ -38,8 +38,11 @@ export class AttioConnector implements CRMConnector {
   }
 
   async whoami(): Promise<{ workspace: string }> {
+    // Live-verified 2026-08: /self returns a FLAT token-introspection object
+    // (workspace_name, workspace_id at top level) — no `data` wrapper.
     const data = await this.req("/self");
-    return { workspace: data?.data?.workspace_name ?? data?.data?.workspace_id ?? "unknown" };
+    const d = data?.data ?? data;
+    return { workspace: d?.workspace_name ?? d?.workspace_id ?? "unknown" };
   }
 
   async search(q: SearchQuery): Promise<CRMMatch[]> {

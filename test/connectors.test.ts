@@ -48,6 +48,18 @@ const attioCompany = {
   },
 };
 
+test("Attio: whoami parses the flat /self token-introspection shape (live-verified)", async () => {
+  // Captured from a real workspace 2026-08: /self has NO `data` wrapper.
+  mockFetch(() => ({
+    active: true,
+    workspace_id: "443d54fb-0000-0000-0000-000000000000",
+    workspace_name: "team-roach",
+    workspace_slug: "roach-dev",
+  }));
+  const who = await new AttioConnector("key").whoami();
+  assert.deepEqual(who, { workspace: "team-roach" });
+});
+
 test("Attio: domain search filters on `domains` and maps the standard signals", async () => {
   mockFetch((url) => {
     if (url.includes("/records/query")) return { data: [attioCompany] };

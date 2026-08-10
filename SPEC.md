@@ -169,12 +169,17 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
 
 ## 15. Open questions
 
-- Attio query filter syntax — confirm against a live workspace before publishing.
-- Affinity field mappings — confirm against a live workspace. Auth + `/whoami`
-  verified; still to verify on real data: `term` search hits, `interaction_dates`,
-  and `list_entries` on the single-record GET. Note V1 exposes no org-level
-  relationship *owner* or list *stage*, so those stay unresolved (verdict still
-  fires on interaction dates / list membership / notes).
+- ~~Attio query filter syntax~~ — verified against a live workspace 2026-08:
+  `{domains: "<domain>"}` exact-matches, `{name: {$contains}}` matches, the
+  interaction/list/member endpoints map as coded. One correction found and
+  fixed: `/self` returns a FLAT token-introspection object (no `data` wrapper).
+  The verified shapes live as fixtures in `test/connectors.test.ts`.
+- Affinity field mappings — deliberately parked (no Affinity workspace in use
+  here). Auth + `/whoami` verified; still to verify on real data: `term`
+  search hits, `interaction_dates`, and `list_entries` on the single-record
+  GET. Note V1 exposes no org-level relationship *owner* or list *stage*, so
+  those stay unresolved (verdict still fires on interaction dates / list
+  membership / notes).
 - Salesforce field mappings — confirm against a live org. Standard-objects-only
   (Account/Contact/Note/Task/Opportunity/Campaign via SOQL); access tokens expire
   with the Salesforce session, so a refresh story (connected-app OAuth) is open.
