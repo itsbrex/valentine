@@ -1069,23 +1069,36 @@ const DATA=[
  },
  {
  "id": "slackdm",
- "name": "Slack DM notifier for watch",
- "company": "backlog.md",
+ "name": "Slack DM notifier — 4th watch channel",
+ "company": "src/notify.ts · Slack app A0BP2FJLV38",
  "status": "open",
- "stage": "Planned",
- "owner": "Note",
- "email": "—",
- "value": 0,
+ "stage": "Needs you",
+ "owner": "You",
+ "email": "524f385",
+ "value": 3,
  "updated": "8/9/2026",
  "source": "follow-up",
- "url": "",
+ "url": "https://api.slack.com/apps/A0BP2FJLV38/install-on-team",
  "sections": [
  {
- "title": "Plan",
+ "title": "Done",
  "items": [
  {
- "title": "Needs a bot token the signing-secret-only design avoids: optional VALENTINE_SLACK_BOT_TOKEN + VALENTINE_SLACK_DM_USER as a fourth --notify channel; slash-command server stays token-free",
- "meta": "fixture plan recorded"
+ "title": "watch --notify slack: conversations.open → chat.postMessage; 3 fetch-mocked tests; slash-command server stays token-free",
+ "meta": "commit 524f385"
+ },
+ {
+ "title": "Slack app 'Valentine' created + installed in '…like the bug' (browser-driven); scopes chat:write + im:write; magenta branding",
+ "meta": "manifest editor bug: CodeMirror setValue invisible to Slack's form — scopes added via OAuth UI"
+ }
+ ]
+ },
+ {
+ "title": "One paste left (yours)",
+ "items": [
+ {
+ "title": "Copy the Bot User OAuth Token (xoxb-…) from the open tab into .env as VALENTINE_SLACK_BOT_TOKEN, plus VALENTINE_SLACK_DM_USER=U0610MQG2",
+ "meta": "then: watch --once --notify slack"
  }
  ]
  }
@@ -1093,35 +1106,31 @@ const DATA=[
  },
  {
  "id": "sidcmd",
- "name": "salesforceSidCommand integration",
- "company": "backlog.md",
- "status": "open",
- "stage": "Planned",
+ "name": "salesforceSidCommand — self-refreshing SF auth",
+ "company": "src/connectors/salesforce.ts · config · init",
+ "status": "active",
+ "stage": "Shipped",
  "owner": "Structural",
- "email": "—",
- "value": 0,
+ "email": "086edfa",
+ "value": 2,
  "updated": "8/9/2026",
  "source": "follow-up",
- "url": "",
+ "url": "https://github.com/itsbrex/valentine/commit/086edfa",
  "sections": [
  {
- "title": "4-step plan",
+ "title": "Shipped (4-step plan executed)",
  "items": [
  {
- "title": "1. Optional salesforceSidCommand config — any shell command that prints a fresh token",
- "meta": ""
+ "title": "Config field + VALENTINE_SALESFORCE_SID_COMMAND + init --sid-command; 'Browser session (macOS)' choice in init stores a command, never a token",
+ "meta": "no secret in config.json"
  },
  {
- "title": "2. Connector runs it lazily + retries once on 401/INVALID_SESSION_ID",
- "meta": "mirrors the wrapper’s per-call refresh"
+ "title": "Connector mints lazily, caches, re-runs the command once on 401 and retries — counter-command tests pin one mint, reuse, and the re-mint",
+ "meta": "+2 tests (29 → 32 with slack)"
  },
  {
- "title": "3. init offers “browser session (macOS)” — no secret ever lands in config.json",
- "meta": ""
- },
- {
- "title": "4. Document Keychain “Always Allow” + the session-IP-lock caveat",
- "meta": "working one-liner already in backlog.md"
+ "title": "Live: sid extracted (112 chars) but every browser session was server-side expired — full round-trip needs one fresh Salesforce login",
+ "meta": "the 401 surfaced exactly where the retry lives"
  }
  ]
  }
