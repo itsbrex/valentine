@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseCrms, activeCrms, type Config } from "../src/config.js";
-import { combineVerdicts, type SourceVerdict } from "../src/sweep.js";
+import { combineVerdicts, sweepAll, type SourceVerdict } from "../src/sweep.js";
 import { sweepToJson } from "../src/output.js";
 import { exitCodeFor } from "../src/output.js";
 
@@ -22,6 +22,36 @@ const sv = (crm: SourceVerdict["crm"], verdict: SourceVerdict["verdict"], extra:
   summary: `${crm} says ${verdict}`,
   citations: [],
   ...extra,
+});
+
+// An expired Salesforce browser session must not cost you the Attio answer —
+// the unattended watch daemon depends on this.
+test("a CRM that throws degrades to ambiguous and the others still report", async () => {
+  const client = {
+    messages: {
+      create: async () => ({
+        content: [
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "submit_verdict",
+            input: { verdict: "clean", summary: "nothing here", citations: [] },
+          },
+        ] as never,
+      }),
+    },
+  };
+  // salesforce has no credentials configured → makeConnector/lookup throws.
+  const conf = cfg({ crm: "salesforce", crms: ["salesforce", "attio"], attioKey: "k".repeat(20) });
+
+  const { combined, sources } = await sweepAll(client as never, conf, "acme.com");
+
+  assert.deepEqual(sources.map((s) => s.crm), ["salesforce", "attio"]);
+  assert.equal(sources[0].verdict, "ambiguous");
+  assert.match(sources[0].summary, /Couldn't reach Salesforce/);
+  assert.equal(sources[1].verdict, "clean", "the healthy CRM still reports");
+  // Never "clean" overall — an unreadable source is unknown, not safe.
+  assert.equal(combined.verdict, "ambiguous");
 });
 
 test("parseCrms: ordered, deduped, unknowns dropped, case-insensitive", () => {
