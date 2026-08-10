@@ -1247,7 +1247,7 @@ const DATA=[
  "items": [
  {
  "title": "No real ANTHROPIC_API_KEY ever existed on this machine (.env placeholder, empty 1Password item). Resolved by shipping the keyless local-LLM path instead: sweeps now run on LFM2.5-2.6B locally — no Anthropic key needed at all",
- "meta": "live single-CRM (Attio) keyless verify ran 8/10; two-CRM SF+Attio verify still wants SF creds in this shell (or a real key for cloud models)"
+ "meta": "CLOSED 8/10: live two-CRM (Salesforce sid-command + Attio) keyless sweep of hut8.com → prior_contact, exit 10"
  }
  ]
  }
@@ -1276,6 +1276,10 @@ const DATA=[
  {
  "title": "Live keyless verify: Ollama upgraded 0.13.5 → 0.32.7 (0.13.x rejects tools for LFM2.5), GGUF pulled, ANTHROPIC_API_KEY unset → real Attio sweep of hut8.com → ✅ Clear, exit 0",
  "meta": "operator config flipped to provider ollama · 8/10/2026"
+ },
+ {
+ "title": "Two-CRM keyless verify: Salesforce (browser-sid auto-auth via VALENTINE_SALESFORCE_SID_COMMAND) + Attio, VALENTINE_CRMS=salesforce,attio → ⚠ prior_contact on the real Hut 8 record (Follow Up + meeting note, cited), Attio clean, exit 10. Found + fixed live: LFM2.5 sometimes burns a turn thinking-only — OllamaClient now retries once",
+ "meta": "c369958 · 61 tests green · 8/10/2026"
  }
  ]
  }
