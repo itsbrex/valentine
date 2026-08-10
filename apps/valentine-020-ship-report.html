@@ -1109,8 +1109,8 @@ const DATA=[
  "name": "salesforceSidCommand — self-refreshing SF auth",
  "company": "src/connectors/salesforce.ts · config · init",
  "status": "active",
- "stage": "Shipped",
- "owner": "Structural",
+ "stage": "Verified",
+ "owner": "Verify",
  "email": "086edfa",
  "value": 2,
  "updated": "8/9/2026",
@@ -1129,8 +1129,8 @@ const DATA=[
  "meta": "+2 tests (29 → 32 with slack)"
  },
  {
- "title": "Live: sid extracted (112 chars) but every browser session was server-side expired — full round-trip needs one fresh Salesforce login",
- "meta": "the 401 surfaced exactly where the retry lives"
+ "title": "Live round-trip verified after re-login: command minted a fresh sid from the browser, whoami + SOQL search returned real records",
+ "meta": "8/10/2026 · read-only"
  }
  ]
  }
