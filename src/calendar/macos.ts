@@ -23,7 +23,8 @@ ObjC.import('Foundation');
 function run(argv) {
   var minutes = parseInt(argv[0] || '60', 10);
   var store = $.EKEventStore.alloc.init;
-  var status = $.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent);
+  // The bridge returns this enum as a STRING ('3'), not a number — coerce.
+  var status = Number($.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent));
   if (status === 0) {
     var done = false;
     var cb = function () { done = true; };
@@ -37,7 +38,7 @@ function run(argv) {
       $.NSRunLoop.currentRunLoop.runModeBeforeDate(
         $.NSDefaultRunLoopMode, $.NSDate.dateWithTimeIntervalSinceNow(0.1));
     }
-    status = $.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent);
+    status = Number($.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent));
   }
   if (status !== 3 && status !== 4) {
     return JSON.stringify({ error: 'calendar-access-denied' });
