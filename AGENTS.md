@@ -14,8 +14,10 @@ verdict. It never writes, sends, or moves anything.
 | `VALENTINE_SALESFORCE_KEY` | one CRM key | Salesforce REST access token (read-only user). |
 | `VALENTINE_SALESFORCE_INSTANCE_URL` | with the SF key | e.g. `https://yourorg.my.salesforce.com`. |
 | `VALENTINE_MODEL` | no | Defaults to `claude-haiku-4-5`. |
+| `VALENTINE_OLLAMA_HOST` | no | Ollama provider only. Wins over `OLLAMA_HOST` if both are set. |
 | `OLLAMA_HOST` | no | Ollama provider only. Defaults to `http://127.0.0.1:11434`. |
-| `VALENTINE_SLACK_SIGNING_SECRET` | for `valentine slack` | Slack app signing secret. |
+| `VALENTINE_SLACK_SIGNING_SECRET` | for `valentine slack` | Slack app signing secret. Falls back to `SLACK_SIGNING_SECRET`. |
+| `VALENTINE_SLACK_PORT` | no | Port for `valentine slack` (or `--port`). Defaults to `3141`. |
 
 Set `ANTHROPIC_API_KEY` plus exactly one CRM key. Which CRM and which model
 provider are *choices*, not secrets — they live in `~/.valentine/config.json`
