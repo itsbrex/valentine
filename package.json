@@ -27,6 +27,7 @@
     "plans": "bun scripts/plans.mjs",
     "showcase": "node scripts/showcase.mjs",
     "dev": "tsx src/cli.ts",
+    "test": "tsx --test test/*.test.ts",
     "mcp": "tsx src/mcp.ts",
     "build": "tsc",
     "start": "node dist/cli.js",
