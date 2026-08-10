@@ -1040,27 +1040,28 @@ const DATA=[
  },
  {
  "id": "tcc",
- "name": "Grant Calendars permission",
- "company": "System Settings → Privacy",
- "status": "open",
- "stage": "Needs you",
- "owner": "You",
- "email": "—",
+ "name": "Watch verified live end-to-end",
+ "company": "macOS Calendar · TCC",
+ "status": "active",
+ "stage": "Verified",
+ "owner": "Verify",
+ "email": "91e3eb8",
  "value": 0,
  "updated": "8/9/2026",
- "source": "follow-up",
- "url": "",
+ "source": "verification",
+ "url": "https://github.com/itsbrex/valentine/commit/91e3eb8",
+ "bug": true,
  "sections": [
  {
- "title": "The one manual step",
+ "title": "Live findings (after Calendars grant)",
  "items": [
  {
- "title": "macOS TCC has calendar access denied for the terminal host app, so the live watch run is blocked",
- "meta": "denial error path verified working"
+ "title": "BUG: the JXA bridge returns the EventKit auth status as the STRING '3', so the strict !==3 gate reported access-denied even with Full Access granted. Coerced with Number() at both read sites",
+ "meta": "commit 91e3eb8 · found only because the real grant happened"
  },
  {
- "title": "Grant under System Settings → Privacy & Security → Calendars, then: valentine watch --once --notify stdout",
- "meta": "everything else was verified live"
+ "title": "15 events read over the next 72h — attendees parsed, internal meetings correctly produce zero sweep targets (self-exclusion works on real data)",
+ "meta": "read-only · no model calls"
  }
  ]
  }
