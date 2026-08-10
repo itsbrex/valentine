@@ -1243,11 +1243,39 @@ const DATA=[
  ]
  },
  {
- "title": "Blocker found — needs you",
+ "title": "Blocker — resolved without a key",
  "items": [
  {
- "title": "No real ANTHROPIC_API_KEY exists on this machine: .env has held the sk-ant-... placeholder since day one, and the 1Password 'Anthropic Dev' item is empty. Every model sweep (CLI, watch DM, slack) fails with invalid x-api-key the moment it actually runs",
- "meta": "mint a key at console.anthropic.com → paste into .env → live multi-CRM verify runs"
+ "title": "No real ANTHROPIC_API_KEY ever existed on this machine (.env placeholder, empty 1Password item). Resolved by shipping the keyless local-LLM path instead: sweeps now run on LFM2.5-2.6B locally — no Anthropic key needed at all",
+ "meta": "live single-CRM (Attio) keyless verify ran 8/10; two-CRM SF+Attio verify still wants SF creds in this shell (or a real key for cloud models)"
+ }
+ ]
+ }
+ ]
+ },
+ {
+ "id": "locallm",
+ "name": "Keyless local LLM: LFM2.5-2.6B",
+ "company": "src/lfm.ts · onnx.ts · ollama.ts",
+ "status": "active",
+ "stage": "Verified",
+ "owner": "Agent",
+ "email": "d4ca1ec",
+ "value": 20,
+ "updated": "8/10/2026",
+ "source": "follow-up",
+ "url": "https://github.com/itsbrex/valentine/pull/2",
+ "sections": [
+ {
+ "title": "Shipped (PR #2)",
+ "items": [
+ {
+ "title": "Shared LFM2.5 parser (think stripping + Pythonic/JSON <|tool_call_start|> calls); Ollama default now hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M with marker-fallback recovery; new in-process onnx provider via lazy @huggingface/transformers (deps unchanged); init --provider onnx --onnx-dtype",
+ "meta": "20 new tests, 59 total green"
+ },
+ {
+ "title": "Live keyless verify: Ollama upgraded 0.13.5 → 0.32.7 (0.13.x rejects tools for LFM2.5), GGUF pulled, ANTHROPIC_API_KEY unset → real Attio sweep of hut8.com → ✅ Clear, exit 0",
+ "meta": "operator config flipped to provider ollama · 8/10/2026"
  }
  ]
  }
