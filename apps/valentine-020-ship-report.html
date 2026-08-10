@@ -1215,6 +1215,43 @@ const DATA=[
  ]
  }
  ]
+ },
+ {
+ "id": "multicrm",
+ "name": "Multi-CRM sweeps: Salesforce + Attio",
+ "company": "src/sweep.ts · all surfaces",
+ "status": "open",
+ "stage": "Needs you",
+ "owner": "You",
+ "email": "f9f9dc6",
+ "value": 7,
+ "updated": "8/10/2026",
+ "source": "follow-up",
+ "url": "https://github.com/itsbrex/valentine/commit/f9f9dc6",
+ "sections": [
+ {
+ "title": "Shipped",
+ "items": [
+ {
+ "title": "Ordered crms list (first = primary): config.json, VALENTINE_CRMS env (makes the CRM choice env-settable — Claude Desktop needs no config file), init --crms + interactive multiselect",
+ "meta": ""
+ },
+ {
+ "title": "One agent loop per CRM; worst-of combined verdict drives exit codes + watch; per-CRM blocks in CLI/Slack; sources[] in JSON/MCP. Single-CRM output byte-identical",
+ "meta": "7 tests (39 total), CI green"
+ }
+ ]
+ },
+ {
+ "title": "Blocker found — needs you",
+ "items": [
+ {
+ "title": "No real ANTHROPIC_API_KEY exists on this machine: .env has held the sk-ant-... placeholder since day one, and the 1Password 'Anthropic Dev' item is empty. Every model sweep (CLI, watch DM, slack) fails with invalid x-api-key the moment it actually runs",
+ "meta": "mint a key at console.anthropic.com → paste into .env → live multi-CRM verify runs"
+ }
+ ]
+ }
+ ]
  }
 ];
 
