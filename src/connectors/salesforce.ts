@@ -37,8 +37,15 @@ export class SalesforceConnector implements CRMConnector {
   }
 
   async whoami(): Promise<{ workspace: string }> {
-    const recs = await this.soql("SELECT Name FROM Organization LIMIT 1");
-    return { workspace: recs[0]?.Name ?? new URL(this.instanceUrl).hostname };
+    // Live-verified 2026-08: some orgs restrict the Organization sObject
+    // (INVALID_TYPE) even for users who can query Account fine — fall back to
+    // the instance hostname instead of failing the connection check.
+    try {
+      const recs = await this.soql("SELECT Name FROM Organization LIMIT 1");
+      return { workspace: recs[0]?.Name ?? new URL(this.instanceUrl).hostname };
+    } catch {
+      return { workspace: new URL(this.instanceUrl).hostname };
+    }
   }
 
   async search(q: SearchQuery): Promise<CRMMatch[]> {

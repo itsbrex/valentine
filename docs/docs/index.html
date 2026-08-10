@@ -239,7 +239,7 @@ valentine init -y --crm salesforce --crm-key "$VALENTINE_SALESFORCE_KEY" \
       <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Powers the agent loop. Required — unless the provider is Ollama.</td></tr>
       <tr><td><code>VALENTINE_ATTIO_KEY</code></td><td>Read-only Attio token. Set exactly one CRM key.</td></tr>
       <tr><td><code>VALENTINE_AFFINITY_KEY</code></td><td>Read-only Affinity token.</td></tr>
-      <tr><td><code>VALENTINE_SALESFORCE_KEY</code></td><td>Salesforce REST access token (a read-only user's — e.g. from <code>sf org display --json</code> or a connected app).</td></tr>
+      <tr><td><code>VALENTINE_SALESFORCE_KEY</code></td><td>Salesforce REST access token (a read-only user's — e.g. from <code>sf org display --json</code> or a connected app). macOS: a logged-in browser session's <code>sid</code> cookie also works — <a href="https://github.com/kugamon/salesforce-mcp-auto-auth-chrome">salesforce-mcp-auto-auth-chrome</a> extracts it, sidestepping token expiry (see <code>backlog.md</code>).</td></tr>
       <tr><td><code>VALENTINE_SALESFORCE_INSTANCE_URL</code></td><td>Required with the Salesforce key, e.g. <code>https://yourorg.my.salesforce.com</code>.</td></tr>
       <tr><td><code>VALENTINE_MODEL</code></td><td>Override the model. Defaults to <code>claude-haiku-4-5</code>.</td></tr>
       <tr><td><code>OLLAMA_HOST</code></td><td>Ollama host (provider "ollama"). Defaults to <code>http://127.0.0.1:11434</code>; <code>VALENTINE_OLLAMA_HOST</code> wins if both set.</td></tr>

@@ -197,6 +197,19 @@ test("Salesforce: restricted objects degrade to empty context, never a crash", a
   assert.deepEqual(await conn.getContext("companies", "001A"), { notes: [], lists: [], people: [] });
 });
 
+test("Salesforce: whoami falls back to the hostname when Organization is restricted (live-verified)", async () => {
+  // Captured live 2026-08: orgs can return INVALID_TYPE for Organization even
+  // when Account queries work for the same user.
+  mockFetch(
+    () =>
+      new Response('[{"message":"sObject type \'Organization\' is not supported.","errorCode":"INVALID_TYPE"}]', {
+        status: 400,
+      }),
+  );
+  const who = await new SalesforceConnector("tok", "https://cresa.my.salesforce.com").whoami();
+  assert.deepEqual(who, { workspace: "cresa.my.salesforce.com" });
+});
+
 test("Salesforce: getContext folds Notes + Task subjects, Opportunities, Contacts", async () => {
   mockFetch((url) => {
     const q = soqlOf(url);
