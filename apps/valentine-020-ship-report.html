@@ -1183,6 +1183,38 @@ const DATA=[
  ]
  }
  ]
+ },
+ {
+ "id": "launchd",
+ "name": "Ambient watch via launchd",
+ "company": "scripts/install-launchd.sh",
+ "status": "active",
+ "stage": "Verified",
+ "owner": "Structural",
+ "email": "5d70cbd",
+ "value": 0,
+ "updated": "8/10/2026",
+ "source": "follow-up",
+ "url": "",
+ "sections": [
+ {
+ "title": "Shape",
+ "items": [
+ {
+ "title": "com.valentine.watch agent: watch --once every 5 min (StartInterval 300, RunAtLoad), channel via VALENTINE_WATCH_NOTIFY, logs to ~/.valentine/watch.log",
+ "meta": "installer supports macos|fullscreen|stdout|slack + --uninstall"
+ },
+ {
+ "title": "Wrapper script handles launchd's bare environment: mise-shims/Homebrew PATH + .env sourcing, then exec tsx",
+ "meta": ""
+ },
+ {
+ "title": "Installed live with the slack channel — first run exited 0 under launchd, calendar read OK",
+ "meta": "8/10/2026"
+ }
+ ]
+ }
+ ]
  }
 ];
 
