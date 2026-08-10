@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "apps": {
+    "apps/valentine-020-ship-report.html": {
+      "recipe": "records",
+      "appkitVersion": "1.0.0",
+      "recipeDigest": "f6320c88454f37c4ef27d1140f5c5e1d33a23786a928d764fe4edfa6bf933f0f",
+      "generatedSha": "cb453385665bb0836a7831efb06af97bc71187d0da073ffcefab0819a6782ff3",
+      "generatedAt": "2026-08-10",
+      "placeholders": {
+        "title": "Valentine 0.2.0 — Ship Report",
+        "badge": "SHIPPED",
+        "slug": "app-valentine-020-ship-report",
+        "date": "2026-08-10",
+        "repo": "valentine"
+      }
+    }
+  }
+}
