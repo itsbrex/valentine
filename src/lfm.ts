@@ -9,11 +9,15 @@ export interface LfmToolCall {
   input: Record<string, unknown>;
 }
 
-/** Remove <think> spans, including an unclosed trailing one (truncation). */
+/** Remove <think> spans, including an unclosed trailing one (truncation) and a
+ *  dangling close with no opener — chat templates that pre-fill the opening
+ *  <think> token (LFM2.5's does) make generation start mid-reasoning, so the
+ *  raw output looks like "…reasoning</think>the actual answer". */
 export function stripThink(text: string): string {
   return text
     .replace(/<think>[\s\S]*?<\/think>/g, "")
     .replace(/<think>[\s\S]*$/, "")
+    .replace(/^[\s\S]*?<\/think>/, "")
     .trim();
 }
 
@@ -23,21 +27,59 @@ const CALL_RE = /<\|tool_call_start\|>([\s\S]*?)<\|tool_call_end\|>/g;
 export function parseLfmToolCalls(text: string): { text: string; calls: LfmToolCall[] } {
   const calls: LfmToolCall[] = [];
   const rest = text.replace(CALL_RE, (_, body: string) => {
-    const call = parseCall(body.trim());
-    if (call) calls.push(call);
+    calls.push(...parseCallSpan(body.trim()));
     return "";
   });
   return { text: rest.trim(), calls };
 }
 
-function parseCall(body: string): LfmToolCall | null {
+/** One marker span → zero or more calls. LFM2.5 emits a Python *list* —
+ *  `[search_crm(domain='acme.com')]` (verified against the real model) — but
+ *  a bare `func(...)` and the JSON form both show up too. */
+function parseCallSpan(body: string): LfmToolCall[] {
   try {
-    const j = JSON.parse(body);
-    if (j && typeof j.name === "string")
-      return { name: j.name, input: (j.arguments ?? j.parameters ?? {}) as Record<string, unknown> };
+    const parsed = JSON.parse(body);
+    const items = (Array.isArray(parsed) ? parsed : [parsed]).filter(
+      (j) => j && typeof j.name === "string",
+    );
+    if (items.length)
+      return items.map((j) => ({
+        name: j.name as string,
+        input: (j.arguments ?? j.parameters ?? {}) as Record<string, unknown>,
+      }));
   } catch {
     /* not the JSON form — try Pythonic */
   }
+  const listed = /^\[([\s\S]*)\]$/.exec(body);
+  return splitTopLevel(listed ? listed[1] : body)
+    .map(parseCall)
+    .filter((c): c is LfmToolCall => c !== null);
+}
+
+/** Split on commas at nesting depth 0, ignoring those inside quotes. */
+function splitTopLevel(src: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let inStr: string | null = null;
+  let start = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inStr) {
+      if (c === "\\") i++;
+      else if (c === inStr) inStr = null;
+    } else if (c === '"' || c === "'") inStr = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      parts.push(src.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(src.slice(start));
+  return parts.map((s) => s.trim()).filter(Boolean);
+}
+
+function parseCall(body: string): LfmToolCall | null {
   const m = /^([A-Za-z_][\w.]*)\s*\(([\s\S]*)\)$/.exec(body);
   if (!m) return null;
   return { name: m[1], input: parseArgs(m[2]) };
@@ -53,7 +95,15 @@ function parseArgs(src: string): Record<string, unknown> {
   while (i < src.length) {
     skipWs();
     const key = /^[A-Za-z_]\w*/.exec(src.slice(i))?.[0];
-    if (!key) break;
+    // A positional or otherwise unkeyed token: consume it and keep scanning.
+    // Abandoning here would drop every later key=value pair too, turning a
+    // usable tool call into a silent no-arg one.
+    if (!key) {
+      i = Math.max(parseValue(src, i)[1], i + 1);
+      skipWs();
+      if (src[i] === ",") i++;
+      continue;
+    }
     i += key.length;
     skipWs();
     if (src[i] !== "=") break;

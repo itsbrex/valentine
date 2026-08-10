@@ -10,9 +10,13 @@ import type { ModelClient } from "./models.js";
 import type { OnnxDtype } from "./config.js";
 import { stripThink, parseLfmToolCalls } from "./lfm.js";
 
+/** Extra token allowance for a reasoning model's <think> block, on top of the
+ *  caller's answer budget. LFM2.5 routinely spends ~500-1000 tokens thinking. */
+const THINK_HEADROOM = 2048;
+
 export class OnnxClient implements ModelClient {
   private toolSeq = 0;
-  private ready?: Promise<{ tokenizer: any; model: any }>;
+  private ready?: Promise<{ tokenizer: any; model: any; opensThink: boolean }>;
 
   constructor(
     private dtype: OnnxDtype,
@@ -27,14 +31,33 @@ export class OnnxClient implements ModelClient {
       try {
         tf = await this.loader();
       } catch {
+        // Bare-specifier resolution walks up from THIS file, so the package has
+        // to sit in an ancestor node_modules: global install only works when
+        // valentine itself is global.
         throw new Error(
-          "The ONNX provider needs @huggingface/transformers — run " +
-            "`npm i -g @huggingface/transformers` (or install it next to valentine) and retry.",
+          "The ONNX provider needs @huggingface/transformers. Install it alongside " +
+            "valentine: `npm i -g @huggingface/transformers` if valentine is installed " +
+            "globally, otherwise `npm i @huggingface/transformers` in this project.",
         );
       }
       const tokenizer = await tf.AutoTokenizer.from_pretrained(modelId);
       const model = await tf.AutoModelForCausalLM.from_pretrained(modelId, { dtype: this.dtype });
-      return { tokenizer, model };
+      // Reasoning templates (LFM2.5's) end the generation prompt with an open
+      // <think>, so generation starts *inside* the reasoning block and only
+      // ever emits the closing tag. Detect it once; fromOnnx re-attaches the
+      // opener so a truncated think block is dropped instead of leaking out
+      // as the answer.
+      let opensThink = false;
+      try {
+        const probe: string = tokenizer.apply_chat_template([{ role: "user", content: "hi" }], {
+          add_generation_prompt: true,
+          tokenize: false,
+        });
+        opensThink = /<think>\s*$/.test(probe);
+      } catch {
+        /* templates that reject a bare probe just opt out of the fixup */
+      }
+      return { tokenizer, model, opensThink };
     })();
     return this.ready;
   }
@@ -47,7 +70,7 @@ export class OnnxClient implements ModelClient {
       tools: unknown;
       messages: Anthropic.MessageParam[];
     }): Promise<{ content: Anthropic.ContentBlock[] }> => {
-      const { tokenizer, model } = await this.load(req.model);
+      const { tokenizer, model, opensThink } = await this.load(req.model);
       const inputs = tokenizer.apply_chat_template(toChat(req.system, req.messages), {
         tools: (req.tools as any[]).map((t) => ({
           type: "function",
@@ -58,7 +81,10 @@ export class OnnxClient implements ModelClient {
       });
       const output = await model.generate({
         ...inputs,
-        max_new_tokens: req.max_tokens,
+        // max_tokens budgets the answer; a reasoning model spends a separate,
+        // often larger allowance thinking first. Without headroom it runs out
+        // mid-thought and never answers at all.
+        max_new_tokens: req.max_tokens + (opensThink ? THINK_HEADROOM : 0),
         do_sample: false,
         repetition_penalty: 1.05,
       });
@@ -67,9 +93,14 @@ export class OnnxClient implements ModelClient {
       const newTokens = output.slice(null, [inputs.input_ids.dims.at(-1), null]);
       const raw: string = tokenizer.batch_decode(newTokens, { skip_special_tokens: false })[0] ?? "";
 
-      const { text, calls } = parseLfmToolCalls(stripThink(raw));
+      // Tool calls come out of unambiguous markers, so lift them before any
+      // think-stripping can touch them; only the leftover prose is reasoning.
+      const { text, calls } = parseLfmToolCalls(raw);
       const blocks: any[] = [];
-      const prose = text.replace(/<\|[^|]*\|>/g, "").trim(); // scrub leftover specials (<|im_end|>…)
+      const reattached = opensThink && !text.startsWith("<think>") ? `<think>${text}` : text;
+      const prose = stripThink(reattached)
+        .replace(/<\|[^|]*\|>/g, "") // scrub leftover specials (<|im_end|>…)
+        .trim();
       if (prose) blocks.push({ type: "text", text: prose, citations: null });
       for (const c of calls)
         blocks.push({ type: "tool_use", id: `onnx_call_${++this.toolSeq}`, name: c.name, input: c.input });

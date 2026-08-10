@@ -86,6 +86,31 @@ test("runs read tools, feeds results back, captures the verdict", async () => {
   assert.deepEqual(JSON.parse(lastMsg.content[0].content), [match]);
 });
 
+// Small local models write "null"/"N/A" into optional fields instead of
+// omitting them; rendering "Owner: null" reads as a bug to the user.
+test("placeholder words in optional fields are treated as absent", async () => {
+  const { crm } = fakeCrm();
+  const { client } = scriptedClient([
+    [
+      toolUse("t1", "submit_verdict", {
+        verdict: "clean",
+        summary: "Nothing on file.",
+        owner: "null",
+        last_touch: "N/A",
+        status: "  ",
+        citations: [],
+      }),
+    ],
+  ]);
+
+  const v = await lookup(client, "test-model", crm, "acme.com");
+
+  assert.equal(v.owner, undefined);
+  assert.equal(v.lastTouch, undefined);
+  assert.equal(v.status, undefined);
+  assert.equal(v.summary, "Nothing on file."); // real values still pass through
+});
+
 test("text-only response → ambiguous, with the text as summary", async () => {
   const { crm } = fakeCrm();
   const { client, requests } = scriptedClient([

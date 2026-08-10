@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OnnxClient } from "../src/onnx.js";
 
-function fakeTransformers(reply: string) {
+function fakeTransformers(reply: string, opensThink = false) {
   const seen = {
     chats: [] as { chat: unknown[]; opts: Record<string, unknown> }[],
     genOpts: [] as Record<string, unknown>[],
@@ -20,6 +20,8 @@ function fakeTransformers(reply: string) {
   });
   const tokenizer = {
     apply_chat_template: (chat: unknown[], opts: Record<string, unknown>) => {
+      // tokenize:false is the probe that detects a think-opening template.
+      if (opts.tokenize === false) return opensThink ? "…<|im_start|>assistant\n<think>" : "…";
       seen.chats.push({ chat, opts });
       return { input_ids: tensor([1, 7]), attention_mask: tensor([1, 7]) };
     },
@@ -106,6 +108,49 @@ test("model loads once across calls", async () => {
   await client.messages.create(baseReq);
   await client.messages.create(baseReq);
   assert.equal(seen.loads, 1);
+});
+
+// Both observed live against the real LFM2.5-2.6B-ONNX weights: the template
+// ends its generation prompt with an open <think>, so the model emits only the
+// closing tag — and when reasoning outruns the budget, no tag at all.
+test("think-opening template: reasoning before </think> is not the answer", async () => {
+  const { loader } = fakeTransformers(
+    "The user wants acme.com. I should search.</think>Nothing on file.<|im_end|>",
+    true,
+  );
+  const { content } = await new OnnxClient("q4", loader).messages.create(baseReq);
+  assert.equal((content[0] as { text: string }).text, "Nothing on file.");
+});
+
+test("think-opening template: truncated reasoning yields no answer, not leaked reasoning", async () => {
+  const { loader } = fakeTransformers("I should check whether hut8.com... Wait, I need to", true);
+  const { content } = await new OnnxClient("q4", loader).messages.create(baseReq);
+  assert.deepEqual(content, []);
+});
+
+test("tool calls survive even when wrapped in an unclosed think block", async () => {
+  const { loader } = fakeTransformers(
+    "reasoning</think><|tool_call_start|>[search_crm(domain='acme.com')]<|tool_call_end|>",
+    true,
+  );
+  const { content } = await new OnnxClient("q4", loader).messages.create(baseReq);
+  assert.deepEqual(content.map((b: { type: string }) => b.type), ["tool_use"]);
+});
+
+test("think headroom is added on top of the caller's answer budget", async () => {
+  const { seen, loader } = fakeTransformers("ok</think>done", true);
+  await new OnnxClient("q4", loader).messages.create(baseReq);
+  assert.ok(
+    (seen.genOpts[0].max_new_tokens as number) > baseReq.max_tokens,
+    "reasoning models need budget beyond the answer allowance",
+  );
+});
+
+test("non-reasoning template gets no headroom and no think fixup", async () => {
+  const { seen, loader } = fakeTransformers("Plain answer.", false);
+  const { content } = await new OnnxClient("q4", loader).messages.create(baseReq);
+  assert.equal(seen.genOpts[0].max_new_tokens, baseReq.max_tokens);
+  assert.equal((content[0] as { text: string }).text, "Plain answer.");
 });
 
 test("missing @huggingface/transformers → actionable error", async () => {

@@ -78,11 +78,15 @@ Prefer a local model — and no Anthropic key at all? Two ways, both defaulting
 to [LFM2.5-2.6B](https://huggingface.co/LiquidAI/LFM2.5-2.6B), a free
 open-weights 2.6B model with best-in-class tool calling:
 
-- **Ollama** — `ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M` (~1.7 GB),
-  then pick the Ollama provider in `valentine init`.
-- **In-process ONNX** — no server at all: `npm i -g @huggingface/transformers`,
-  then pick the ONNX provider in `valentine init` (~1.9 GB download on first
-  run, cached by Hugging Face).
+- **Ollama** (recommended) — `ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M`
+  (~1.7 GB), then pick the Ollama provider in `valentine init`. Needs Ollama
+  ≥0.14 — older builds reject tool calling for this model.
+- **In-process ONNX** — no server at all. Install the runtime next to valentine
+  (`npm i -g @huggingface/transformers` if valentine is global, otherwise
+  `npm i @huggingface/transformers` in your project), then pick the ONNX
+  provider in `valentine init`. First run downloads ~1.9 GB to the Hugging Face
+  cache. Simplest to set up, but noticeably slower per step than Ollama, which
+  gets Metal/GPU acceleration — prefer Ollama if you have it.
 
 See [`.env.example`](./.env.example) for the full env-var list.
 
