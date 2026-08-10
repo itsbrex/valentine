@@ -8,8 +8,9 @@
 
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { loadConfig, saveConfig, type Config } from "./config.js";
-import { makeConnector, crmKey } from "./connectors/index.js";
+import { loadConfig, saveConfig, parseCrms, activeCrms, CRM_IDS, type Config } from "./config.js";
+import { makeConnector, crmKey, missingCrmCreds } from "./connectors/index.js";
+import { sweepAll, CRM_LABELS } from "./sweep.js";
 import {
   makeClient,
   MODELS,
@@ -18,8 +19,7 @@ import {
   DEFAULT_OLLAMA_HOST,
   DEFAULT_OLLAMA_MODEL,
 } from "./models.js";
-import { lookup } from "./agent.js";
-import { renderVerdict, exitCodeFor, toJson } from "./output.js";
+import { exitCodeFor, renderSweep, sweepToJson } from "./output.js";
 import { watch } from "./watch.js";
 import { VERSION } from "./version.js";
 
@@ -60,10 +60,19 @@ function runInitHeadless(cfg: Config, args: string[]): void {
     bail(`--crm must be "attio", "affinity", or "salesforce"`);
   cfg.crm = crm;
 
+  // --crms salesforce,attio → sweep several CRMs, first is primary.
+  const crmsFlag = getFlag(args, "crms");
+  if (crmsFlag) {
+    const list = parseCrms(crmsFlag);
+    if (!list.length) bail(`--crms must be a comma list of: ${CRM_IDS.join(", ")}`);
+    cfg.crms = list;
+    cfg.crm = list[0];
+  }
+
   const key = getFlag(args, "crm-key") ?? getFlag(args, "key");
   if (key) {
-    if (crm === "affinity") cfg.affinityKey = key;
-    else if (crm === "salesforce") cfg.salesforceKey = key;
+    if (cfg.crm === "affinity") cfg.affinityKey = key;
+    else if (cfg.crm === "salesforce") cfg.salesforceKey = key;
     else cfg.attioKey = key;
   }
   cfg.salesforceInstanceUrl = getFlag(args, "instance-url") ?? cfg.salesforceInstanceUrl;
@@ -84,18 +93,19 @@ function runInitHeadless(cfg: Config, args: string[]): void {
     if (!model && cfg.model.startsWith("claude-")) cfg.model = DEFAULT_OLLAMA_MODEL;
   }
 
-  if (!crmKey(cfg))
+  const missing = missingCrmCreds(cfg);
+  if (missing.length)
     bail(
-      `No ${crm} key. Pass --crm-key or set VALENTINE_${crm.toUpperCase()}_KEY` +
-        (crm === "salesforce" ? " (or --sid-command / VALENTINE_SALESFORCE_SID_COMMAND)." : "."),
+      `Missing credentials for: ${missing.join(", ")}. Pass --crm-key / set the VALENTINE_*_KEY ` +
+        "env vars (Salesforce: --instance-url plus a key or --sid-command).",
     );
-  if (crm === "salesforce" && !cfg.salesforceInstanceUrl)
-    bail("Salesforce needs --instance-url or VALENTINE_SALESFORCE_INSTANCE_URL.");
   if (provider === "anthropic" && !cfg.anthropicKey)
     bail("No Anthropic key. Pass --anthropic-key or set ANTHROPIC_API_KEY.");
 
   saveConfig(cfg);
-  console.log(`valentine: configured (${cfg.crm} · ${cfg.model}). Try: valentine acme.com`);
+  console.log(
+    `valentine: configured (${activeCrms(cfg).join(" + ")} · ${cfg.model}). Try: valentine acme.com`,
+  );
 }
 
 async function runInit(cfg: Config, args: string[] = []): Promise<void> {
@@ -186,6 +196,23 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
     bail(e.message);
   }
 
+  // Optional extra CRMs — e.g. company Salesforce primary with personal Attio
+  // underneath. Only CRMs whose credentials already resolve (env/config) are
+  // offered; configure others headlessly with --crms + env vars.
+  const others = CRM_IDS.filter(
+    (c) => c !== cfg.crm && crmKey(cfg, c) && (c !== "salesforce" || cfg.salesforceInstanceUrl),
+  );
+  if (others.length) {
+    const extras = await ask(
+      p.multiselect({
+        message: "Also sweep these CRMs? (results show under the primary — optional)",
+        options: others.map((c) => ({ value: c, label: CRM_LABELS[c] })),
+        required: false,
+      }),
+    );
+    cfg.crms = [cfg.crm, ...(extras as Config["crm"][])];
+  }
+
   const provider = await ask(
     p.select({
       message: "Model provider",
@@ -253,39 +280,42 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
 }
 
 async function runLookup(cfg: Config, target: string, json: boolean): Promise<void> {
-  if (!crmKey(cfg) || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
+  const missing = missingCrmCreds(cfg);
+  if (missing.length || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
     // Don't launch an interactive wizard at an agent or a pipe — fail loud.
     if (json || isHeadless(process.argv.slice(2)))
       bail(
-        "Not configured. Set VALENTINE_ATTIO_KEY (or VALENTINE_AFFINITY_KEY / " +
-          "VALENTINE_SALESFORCE_KEY) and ANTHROPIC_API_KEY, or run `valentine init`.",
+        missing.length
+          ? `Missing credentials for: ${missing.join(", ")}. Set the VALENTINE_*_KEY env vars ` +
+              "(Salesforce: also _INSTANCE_URL, or a sid command), or run `valentine init`."
+          : "No Anthropic key. Set ANTHROPIC_API_KEY or run `valentine init`.",
       );
     await runInit(cfg);
   }
 
-  const crm = makeConnector(cfg);
   const client = makeClient(cfg);
+  const crmNames = activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + ");
 
   if (json) {
-    const v = await lookup(client, cfg.model, crm, target);
-    console.log(toJson(v, target));
-    process.exit(exitCodeFor(v));
+    const res = await sweepAll(client, cfg, target);
+    console.log(sweepToJson(res, target));
+    process.exit(exitCodeFor(res.combined));
   }
 
   p.intro(pc.magenta(pc.bold("✦ Valentine")));
   const s = p.spinner();
-  s.start(pc.dim(`sweeping fund memory for ${pc.bold(target)} — records · notes · last touch…`));
-  let v;
+  s.start(pc.dim(`sweeping ${crmNames} for ${pc.bold(target)} — records · notes · last touch…`));
+  let res;
   try {
-    v = await lookup(client, cfg.model, crm, target);
+    res = await sweepAll(client, cfg, target);
   } catch (e: any) {
     s.stop(pc.red("Sweep failed"));
     bail(e.message);
   }
   s.stop(pc.green("done"));
-  p.note(renderVerdict(v!), pc.bold(target));
+  p.note(renderSweep(res!), pc.bold(target));
   p.outro(pc.dim("read-only — nothing was touched."));
-  process.exit(exitCodeFor(v!));
+  process.exit(exitCodeFor(res!.combined));
 }
 
 function printHelp(): void {
@@ -302,6 +332,7 @@ function printHelp(): void {
       "  --json              machine-readable verdict\n" +
       "  --non-interactive   never prompt — for agents & scripts (alias -y)\n" +
       "  --crm <attio|affinity|salesforce> --crm-key <k> --instance-url <url>\n" +
+      "  --crms <a,b>        sweep several CRMs, first is primary (e.g. salesforce,attio)\n" +
       "  --sid-command <cmd> Salesforce: command that prints a fresh token (self-refreshing)\n" +
       "  --provider <anthropic|ollama> --ollama-host <url> --anthropic-key <k> --model <m>\n" +
       "                      headless `init` inputs (or use env vars below)\n" +

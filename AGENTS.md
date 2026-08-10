@@ -14,6 +14,7 @@ verdict. It never writes, sends, or moves anything.
 | `VALENTINE_SALESFORCE_KEY` | one CRM key | Salesforce REST access token (read-only user). |
 | `VALENTINE_SALESFORCE_INSTANCE_URL` | with the SF key | e.g. `https://yourorg.my.salesforce.com`. |
 | `VALENTINE_SALESFORCE_SID_COMMAND` | no | Instead of the SF key: shell command that prints a fresh access token (re-run on 401). |
+| `VALENTINE_CRMS` | no | Sweep several CRMs, first is primary — e.g. `salesforce,attio` (company org + personal CRM). Needs each CRM's credentials. Multi-CRM JSON adds a `sources[]` array; exit code reflects the worst verdict. |
 | `VALENTINE_MODEL` | no | Defaults to `claude-haiku-4-5`. |
 | `VALENTINE_OLLAMA_HOST` | no | Ollama provider only. Wins over `OLLAMA_HOST` if both are set. |
 | `OLLAMA_HOST` | no | Ollama provider only. Defaults to `http://127.0.0.1:11434`. |

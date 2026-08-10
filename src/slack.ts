@@ -13,9 +13,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import pc from "picocolors";
 import type { Config } from "./config.js";
-import { makeConnector, crmKey } from "./connectors/index.js";
+import { missingCrmCreds } from "./connectors/index.js";
 import { makeClient } from "./models.js";
-import { lookup } from "./agent.js";
+import { sweepAll, CRM_LABELS, type SweepResult } from "./sweep.js";
 import type { Verdict } from "./connectors/types.js";
 
 const DEFAULT_PORT = 3141;
@@ -40,14 +40,8 @@ function verifySignature(secret: string, req: IncomingMessage, raw: string): boo
 }
 
 /** Verdict → Slack mrkdwn, mirroring the CLI's renderVerdict without ANSI codes. */
-function slackText(v: Verdict, target: string): string {
-  const head =
-    v.verdict === "prior_contact"
-      ? "⚠ *Prior contact*"
-      : v.verdict === "clean"
-        ? "✅ *Clear*"
-        : "❓ *Ambiguous*";
-  const lines = [`${head} — ${target}`, v.summary];
+function verdictText(v: Verdict): string {
+  const lines = [v.summary];
   const meta: string[] = [];
   if (v.owner) meta.push(`Owner: ${v.owner}`);
   if (v.lastTouch) meta.push(`Last touch: ${v.lastTouch}`);
@@ -55,6 +49,24 @@ function slackText(v: Verdict, target: string): string {
   if (meta.length) lines.push(meta.join(" · "));
   if (v.citations.length) lines.push(`Records: ${v.citations.join(", ")}`);
   return lines.join("\n");
+}
+
+const headFor = (v: Verdict): string =>
+  v.verdict === "prior_contact"
+    ? "⚠ *Prior contact*"
+    : v.verdict === "clean"
+      ? "✅ *Clear*"
+      : "❓ *Ambiguous*";
+
+/** Sweep → mrkdwn. Single CRM keeps the old shape; multi gets one labeled
+ *  section per CRM under a combined headline. */
+function slackText(res: SweepResult, target: string): string {
+  if (res.sources.length === 1)
+    return [`${headFor(res.combined)} — ${target}`, verdictText(res.combined)].join("\n");
+  const sections = res.sources.map(
+    ({ crm, ...v }) => `*${CRM_LABELS[crm]}* — ${headFor(v)}\n${verdictText(v)}`,
+  );
+  return [`${headFor(res.combined)} — ${target}`, ...sections].join("\n\n");
 }
 
 const ephemeral = (text: string) => JSON.stringify({ response_type: "ephemeral", text });
@@ -68,15 +80,16 @@ export async function runSlack(cfg: Config, args: string[]): Promise<void> {
     );
     process.exit(1);
   }
-  if (!crmKey(cfg) || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
+  const missing = missingCrmCreds(cfg);
+  if (missing.length || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
     console.error(
-      "valentine slack: CRM/model keys missing — run `valentine init` or set the env vars (see --help).",
+      `valentine slack: ${missing.length ? `credentials missing for ${missing.join(", ")}` : "model key missing"} — ` +
+        "run `valentine init` or set the env vars (see --help).",
     );
     process.exit(1);
   }
 
   const port = Number(flag(args, "port") ?? process.env.VALENTINE_SLACK_PORT ?? DEFAULT_PORT);
-  const crm = makeConnector(cfg); // throws early on missing pieces (e.g. instance URL)
   const client = makeClient(cfg);
 
   const server = createServer((req, res) => {
@@ -106,7 +119,7 @@ export async function runSlack(cfg: Config, args: string[]): Promise<void> {
 
       let text: string;
       try {
-        text = slackText(await lookup(client, cfg.model, crm, target), target);
+        text = slackText(await sweepAll(client, cfg, target), target);
       } catch (e: any) {
         text = `Sweep failed: ${e?.message ?? e}`;
       }

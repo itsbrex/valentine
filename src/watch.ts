@@ -17,9 +17,10 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 import type { Config } from "./config.js";
-import { makeConnector, crmKey } from "./connectors/index.js";
+import { activeCrms } from "./config.js";
+import { missingCrmCreds } from "./connectors/index.js";
 import { makeClient } from "./models.js";
-import { lookup } from "./agent.js";
+import { sweepAll, CRM_LABELS } from "./sweep.js";
 import type { Verdict } from "./connectors/types.js";
 import type { Meeting } from "./calendar/types.js";
 import { MacosCalendarSource } from "./calendar/macos.js";
@@ -107,7 +108,7 @@ export async function watch(cfg: Config, args: string[] = []): Promise<void> {
     );
     process.exit(1);
   }
-  if (!crmKey(cfg) || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
+  if (missingCrmCreds(cfg).length || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
     console.error("valentine watch: not configured — run `valentine init` first (see --help).");
     process.exit(1);
   }
@@ -118,13 +119,13 @@ export async function watch(cfg: Config, args: string[] = []): Promise<void> {
   const once = args.includes("--once");
 
   const source = new MacosCalendarSource();
-  const crm = makeConnector(cfg);
   const client = makeClient(cfg);
+  const crmNames = activeCrms(cfg).map((c) => CRM_LABELS[c]).join("+");
 
   console.log(
     pc.magenta(pc.bold("✦ valentine watch")) +
       pc.dim(
-        `  ${source.name} · heads-up ${lead} min out · ${channel}` +
+        `  ${source.name} · ${crmNames} · heads-up ${lead} min out · ${channel}` +
           (once ? " · single pass" : ` · every ${interval} min`),
     ),
   );
@@ -151,7 +152,7 @@ export async function watch(cfg: Config, args: string[] = []): Promise<void> {
       const lines: string[] = [];
       for (const t of targets) {
         try {
-          lines.push(verdictLine(t, await lookup(client, cfg.model, crm, t)));
+          lines.push(verdictLine(t, (await sweepAll(client, cfg, t)).combined));
         } catch (e: any) {
           lines.push(`❓ ${t} — sweep failed: ${e.message?.slice(0, 80)}`);
         }

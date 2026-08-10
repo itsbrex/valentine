@@ -65,6 +65,11 @@ Caveats to resolve later:
   the CRM connector.
 
 ## Other
+- ~~Multi-CRM merge (showcase idea 9)~~ — shipped 2026-08 as multi-CRM sweeps:
+  `crms: [primary, …]` in config / `VALENTINE_CRMS` env / `init --crms`. One
+  agent loop per CRM, per-CRM blocks on every surface, worst-of combined
+  verdict for exit codes and watch. Born from the real setup here: company
+  Salesforce + personal Attio between JP and Brian.
 - ~~Slack slash command `/valentine acme.com` (P2).~~ Shipped — `valentine slack`.
 - Additional CRM connectors: ~~Affinity~~ (shipped), ~~Salesforce~~ (shipped),
   HubSpot (P3).

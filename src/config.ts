@@ -12,8 +12,15 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "n
 const DIR = join(homedir(), ".valentine");
 const FILE = join(DIR, "config.json");
 
+export type CrmId = "attio" | "affinity" | "salesforce";
+export const CRM_IDS: readonly CrmId[] = ["attio", "affinity", "salesforce"];
+
 export interface Config {
-  crm: "attio" | "affinity" | "salesforce";
+  crm: CrmId;
+  /** Ordered list of CRMs to sweep — first is primary. Absent → just `crm`.
+   *  Lets one run check the company org AND a personal CRM (e.g. Salesforce
+   *  company-wide with personal Attio results underneath). */
+  crms?: CrmId[];
   attioKey?: string;
   affinityKey?: string;
   salesforceKey?: string;
@@ -62,9 +69,35 @@ export function loadConfig(): Config {
     process.env.VALENTINE_SLACK_SIGNING_SECRET ?? process.env.SLACK_SIGNING_SECRET,
   );
   if (process.env.VALENTINE_MODEL) base.model = process.env.VALENTINE_MODEL;
+  // VALENTINE_CRMS="salesforce,attio" — ordered, first is primary. The one
+  // choice that's env-overridable, so an MCP host (Claude Desktop…) can run
+  // multi-CRM with no config file at all.
+  if (process.env.VALENTINE_CRMS) {
+    const list = parseCrms(process.env.VALENTINE_CRMS);
+    if (list.length) {
+      base.crms = list;
+      base.crm = list[0];
+    }
+  }
 
   envSourced.set(base, fromEnv);
   return base;
+}
+
+/** Parse a comma-separated CRM list, dropping unknowns and duplicates. */
+export function parseCrms(raw: string): CrmId[] {
+  const out: CrmId[] = [];
+  for (const part of raw.split(",").map((s) => s.trim().toLowerCase())) {
+    if ((CRM_IDS as readonly string[]).includes(part) && !out.includes(part as CrmId))
+      out.push(part as CrmId);
+  }
+  return out;
+}
+
+/** The CRMs a sweep runs against, in order — primary first, deduped. */
+export function activeCrms(cfg: Config): CrmId[] {
+  const list = cfg.crms?.length ? cfg.crms : [cfg.crm];
+  return [...new Set(list)];
 }
 
 export function saveConfig(cfg: Config) {

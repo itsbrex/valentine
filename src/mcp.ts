@@ -16,10 +16,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig } from "./config.js";
-import { makeConnector, crmKey } from "./connectors/index.js";
+import { missingCrmCreds } from "./connectors/index.js";
 import { makeClient } from "./models.js";
-import { lookup } from "./agent.js";
-import { toJson } from "./output.js";
+import { sweepAll } from "./sweep.js";
+import { sweepToJson } from "./output.js";
 import { VERSION } from "./version.js";
 
 const TOOL = {
@@ -55,18 +55,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (!target) throw new Error("`target` is required (a domain or a name).");
 
   const cfg = loadConfig();
-  if (!crmKey(cfg) || (cfg.provider === "anthropic" && !cfg.anthropicKey))
+  const missing = missingCrmCreds(cfg);
+  if (missing.length || (cfg.provider === "anthropic" && !cfg.anthropicKey))
     throw new Error(
-      "Valentine is not configured. Set a CRM key (VALENTINE_ATTIO_KEY / VALENTINE_AFFINITY_KEY / " +
-        "VALENTINE_SALESFORCE_KEY + _INSTANCE_URL) and ANTHROPIC_API_KEY (or provider ollama) " +
-        "in the server environment, or run `valentine init`.",
+      `Valentine is not configured${missing.length ? ` (missing: ${missing.join(", ")})` : ""}. ` +
+        "Set CRM keys (VALENTINE_ATTIO_KEY / VALENTINE_AFFINITY_KEY / VALENTINE_SALESFORCE_KEY + " +
+        "_INSTANCE_URL or _SID_COMMAND), optionally VALENTINE_CRMS=\"salesforce,attio\" for a " +
+        "multi-CRM sweep, and ANTHROPIC_API_KEY (or provider ollama) in the server environment — " +
+        "or run `valentine init`.",
     );
 
-  const verdict = await lookup(makeClient(cfg), cfg.model, makeConnector(cfg), target);
-  const isError = verdict.verdict === "ambiguous";
+  const res = await sweepAll(makeClient(cfg), cfg, target);
+  const isError = res.combined.verdict === "ambiguous";
   return {
     isError,
-    content: [{ type: "text", text: toJson(verdict, target) }],
+    content: [{ type: "text", text: sweepToJson(res, target) }],
   };
 });
 
