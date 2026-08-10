@@ -34,8 +34,10 @@ export const MODELS: ModelOption[] = [
 ];
 
 export const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
-/** Any tool-calling model works (llama3.1, qwen2.5, mistral-nemo…). */
-export const DEFAULT_OLLAMA_MODEL = "llama3.1";
+/** LFM2.5-2.6B: free, open-weights, best-in-class tool calling at 2.6B.
+ *  One-time setup: `ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M`.
+ *  Any other tool-calling model works too (llama3.1, qwen2.5…). */
+export const DEFAULT_OLLAMA_MODEL = "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M";
 
 export interface ProviderOption {
   id: string;

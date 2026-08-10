@@ -1,10 +1,11 @@
 // Local models via Ollama — an adapter that speaks the same tiny "messages"
 // surface as the Anthropic client (ModelClient), translated to Ollama's native
-// /api/chat. Requires a tool-calling model: llama3.1, qwen2.5, mistral-nemo….
-// Everything stays on your machine — CRM data never leaves localhost.
+// /api/chat. Requires a tool-calling model — LFM2.5 (default), llama3.1,
+// qwen2.5…. Everything stays on your machine — CRM data never leaves localhost.
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelClient } from "./models.js";
+import { stripThink, parseLfmToolCalls } from "./lfm.js";
 
 export class OllamaClient implements ModelClient {
   /** Ollama doesn't issue tool-call ids; mint stable local ones. */
@@ -48,10 +49,16 @@ export class OllamaClient implements ModelClient {
     },
   };
 
-  /** Ollama response message → Anthropic-shaped content blocks. */
+  /** Ollama response message → Anthropic-shaped content blocks. LFM2.5 emits
+   *  <think> reasoning and sometimes raw <|tool_call_start|> markers in the
+   *  content when Ollama's template drops structured tool_calls
+   *  (ollama/ollama#15953) — strip the former, recover the latter. */
   private fromOllama(msg: any): Anthropic.ContentBlock[] {
     const blocks: any[] = [];
-    if (msg?.content) blocks.push({ type: "text", text: String(msg.content), citations: null });
+    const { text, calls } = parseLfmToolCalls(stripThink(String(msg?.content ?? "")));
+    if (text) blocks.push({ type: "text", text, citations: null });
+    for (const c of calls)
+      blocks.push({ type: "tool_use", id: `ollama_call_${++this.toolSeq}`, name: c.name, input: c.input });
     for (const c of msg?.tool_calls ?? []) {
       const fn = c?.function ?? {};
       const input = typeof fn.arguments === "string" ? parseArgs(fn.arguments) : (fn.arguments ?? {});
