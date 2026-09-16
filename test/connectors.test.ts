@@ -166,6 +166,7 @@ test("Salesforce: company search queries Account by Website and maps fields", as
     owner: "Sarah Lee",
     lastInteraction: "activity · 2026-05-12",
     linkedPeople: 2,
+    url: "https://org.my.salesforce.com/lightning/r/Account/001A/view", // click-through
   });
 });
 

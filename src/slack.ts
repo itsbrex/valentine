@@ -16,6 +16,8 @@ import type { Config } from "./config.js";
 import { missingCrmCreds } from "./connectors/index.js";
 import { makeClient } from "./models.js";
 import { sweepAll, CRM_LABELS, type SweepResult } from "./sweep.js";
+import { activeCrms } from "./config.js";
+import { slashMessage } from "./slackblocks.js";
 import type { Verdict } from "./connectors/types.js";
 
 const DEFAULT_PORT = 3141;
@@ -117,16 +119,23 @@ export async function runSlack(cfg: Config, args: string[]): Promise<void> {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(ephemeral(`🔍 sweeping fund memory for *${target}*…`));
 
-      let text: string;
+      // Block Kit reply with a mrkdwn fallback (`text`) for clients that
+      // cannot render blocks — the old plain rendering, unchanged.
+      let payload: { text: string; blocks?: unknown[] };
       try {
-        text = slackText(await sweepAll(client, cfg, target), target);
+        const res = await sweepAll(client, cfg, target);
+        const rich = slashMessage(target, res, {
+          crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "),
+          elapsedMs: res.elapsedMs,
+        });
+        payload = { text: slackText(res, target), blocks: rich.blocks };
       } catch (e: any) {
-        text = `Sweep failed: ${e?.message ?? e}`;
+        payload = { text: `Sweep failed: ${e?.message ?? e}` };
       }
       await fetch(responseUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response_type: "ephemeral", replace_original: true, text }),
+        body: JSON.stringify({ response_type: "ephemeral", replace_original: true, ...payload }),
       }).catch(() => {
         /* Slack retracted the response_url (30-min TTL) — nothing to do */
       });

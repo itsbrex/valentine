@@ -13,6 +13,8 @@ const BASE = "https://api.attio.com/v2";
 interface Rec {
   id: { record_id: string };
   values: Record<string, any>;
+  /** Deep link into app.attio.com — present on every record the API returns. */
+  web_url?: string;
 }
 
 export class AttioConnector implements CRMConnector {
@@ -78,6 +80,7 @@ export class AttioConnector implements CRMConnector {
         lastInteraction: li ? `${li.type} · ${li.date}` : undefined,
         firstInteraction: dateOf(interaction(v.first_interaction)),
         linkedPeople: count(v.team) ?? count(v.associated_people),
+        ...(r.web_url ? { url: r.web_url } : {}),
       };
     });
   }

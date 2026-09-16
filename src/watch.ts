@@ -25,6 +25,7 @@ import type { Verdict } from "./connectors/types.js";
 import type { Meeting } from "./calendar/types.js";
 import { MacosCalendarSource } from "./calendar/macos.js";
 import { notify, type NotifyChannel } from "./notify.js";
+import { meetingMessage, type MeetingItem } from "./slackblocks.js";
 
 const STATE_FILE = join(homedir(), ".valentine", "watch-state.json");
 
@@ -149,16 +150,29 @@ export async function watch(cfg: Config, args: string[] = []): Promise<void> {
       const mins = Math.max(1, Math.round((m.start - Date.now()) / 60000));
       console.log(pc.dim(`sweeping for "${m.title}" (${mins} min out): ${targets.join(", ")}`));
 
-      const lines: string[] = [];
-      for (const t of targets) {
-        try {
-          lines.push(verdictLine(t, (await sweepAll(client, cfg, t)).combined));
-        } catch (e: any) {
-          lines.push(`❓ ${t} — sweep failed: ${e.message?.slice(0, 80)}`);
-        }
-      }
+      // Targets sweep in parallel: the CRM reads overlap, and a local model
+      // server queues the (single, short) summary calls itself.
+      const t0 = Date.now();
+      const items: MeetingItem[] = await Promise.all(
+        targets.map(async (target): Promise<MeetingItem> => {
+          try {
+            return { target, res: await sweepAll(client, cfg, target) };
+          } catch (e: any) {
+            return { target, error: String(e?.message ?? e).slice(0, 80) };
+          }
+        }),
+      );
+      const lines = items.map((it) =>
+        it.res ? verdictLine(it.target, it.res.combined) : `❓ ${it.target} — sweep failed: ${it.error}`,
+      );
+      const rich = meetingMessage(m.title, mins, items, {
+        crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "),
+        model: cfg.model,
+        elapsedMs: Date.now() - t0,
+      });
+      console.log(pc.dim(`  done in ${((Date.now() - t0) / 1000).toFixed(1)}s`));
 
-      await notify(channel, `${m.title} in ${mins} min`, lines.join("\n"));
+      await notify(channel, `${m.title} in ${mins} min`, lines.join("\n"), { blocks: rich.blocks });
       state[m.id] = Date.now();
       saveState(state);
     }

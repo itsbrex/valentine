@@ -104,6 +104,7 @@ export class SalesforceConnector implements CRMConnector {
           owner: r.Owner?.Name ?? undefined,
           lastInteraction: r.LastActivityDate ? `activity · ${r.LastActivityDate}` : undefined,
           linkedPeople: r.Contacts?.records?.length ?? undefined,
+          url: this.recordUrl("Account", r.Id),
         }));
       }
 
@@ -120,10 +121,16 @@ export class SalesforceConnector implements CRMConnector {
         domain: r.Email?.split("@")[1],
         owner: r.Owner?.Name ?? undefined,
         lastInteraction: r.LastActivityDate ? `activity · ${r.LastActivityDate}` : undefined,
+        url: this.recordUrl("Contact", r.Id),
       }));
     } catch {
       return []; // restricted object/field for this user → no match, never crash
     }
+  }
+
+  /** Lightning deep link; my.salesforce.com hosts serve Lightning directly. */
+  private recordUrl(sobject: "Account" | "Contact", id?: string): string | undefined {
+    return id ? `${this.instanceUrl}/lightning/r/${sobject}/${id}/view` : undefined;
   }
 
   async getContext(object: "companies" | "people", id: string): Promise<CRMContext> {

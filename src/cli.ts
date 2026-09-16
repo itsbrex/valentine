@@ -26,12 +26,15 @@ import {
   DEFAULT_MODEL,
   DEFAULT_OLLAMA_HOST,
   DEFAULT_OLLAMA_MODEL,
+  OLLAMA_MODELS,
   DEFAULT_ONNX_MODEL,
   DEFAULT_ONNX_DTYPE,
   ONNX_DTYPES,
 } from "./models.js";
 import { exitCodeFor, renderSweep, sweepToJson } from "./output.js";
 import { watch } from "./watch.js";
+import { notify, type NotifyChannel } from "./notify.js";
+import { slashMessage } from "./slackblocks.js";
 import { VERSION } from "./version.js";
 
 const bail = (msg: string): never => {
@@ -256,16 +259,22 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
         initialValue: cfg.ollamaHost ?? DEFAULT_OLLAMA_HOST,
       }),
     );
-    cfg.model = await ask(
-      p.text({
-        message: "Ollama model (needs tool calling — LFM2.5 default, llama3.1, qwen2.5…)",
-        initialValue: cfg.model.startsWith("claude-") ? DEFAULT_OLLAMA_MODEL : cfg.model,
+    const current = cfg.model.startsWith("claude-") ? DEFAULT_OLLAMA_MODEL : cfg.model;
+    const pick = await ask(
+      p.select({
+        message: "Ollama model (measured on the brief task — see scripts/bench-models.mjs)",
+        options: [
+          ...OLLAMA_MODELS.map((m) => ({ value: m.id, label: m.label })),
+          { value: "other", label: "Another Ollama model…", hint: "any tool-calling model: llama3.1, qwen2.5…" },
+        ],
+        initialValue: OLLAMA_MODELS.some((m) => m.id === current) ? current : "other",
       }),
     );
-    p.note(
-      "One-time model pull:\n  ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M",
-      "Heads up",
-    );
+    cfg.model =
+      pick === "other"
+        ? await ask(p.text({ message: "Ollama model name", initialValue: current }))
+        : (pick as string);
+    p.note(`One-time model pull:\n  ollama pull ${cfg.model}`, "Heads up");
     saveConfig(cfg);
     p.outro(pc.dim("Ready. Try:  ") + pc.cyan("valentine acme.com"));
     return;
@@ -333,7 +342,7 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
   p.outro(pc.dim("Ready. Try:  ") + pc.cyan("valentine acme.com"));
 }
 
-async function runLookup(cfg: Config, target: string, json: boolean): Promise<void> {
+async function runLookup(cfg: Config, target: string, json: boolean, args: string[] = []): Promise<void> {
   const missing = missingCrmCreds(cfg);
   if (missing.length || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
     // Don't launch an interactive wizard at an agent or a pipe — fail loud.
@@ -368,6 +377,19 @@ async function runLookup(cfg: Config, target: string, json: boolean): Promise<vo
   }
   s.stop(pc.green("done"));
   p.note(renderSweep(res!), pc.bold(target));
+
+  // --notify slack|macos|fullscreen|stdout: also push the brief to a channel —
+  // the same rendering the watch daemon sends, handy for sharing or testing.
+  const channel = getFlag(args, "notify") as NotifyChannel | undefined;
+  if (channel) {
+    const rich = slashMessage(target, res!, { crms: crmNames, elapsedMs: res!.elapsedMs });
+    try {
+      await notify(channel, target, rich.text, { blocks: rich.blocks });
+      p.log.success(`sent to ${channel}`);
+    } catch (e: any) {
+      p.log.error(`notify ${channel}: ${e?.message ?? e}`);
+    }
+  }
   p.outro(pc.dim("read-only — nothing was touched."));
   process.exit(exitCodeFor(res!.combined));
 }
@@ -393,6 +415,9 @@ function printHelp(): void {
       "  --port <n>          `slack` server port (default 3141)\n" +
       "  --once --lead <min> --interval <min> --notify <macos|fullscreen|stdout|slack>\n" +
       "                      `watch` options (defaults: 30 min lead, 5 min poll, macos)\n" +
+      "  --notify <channel>  on a sweep: also send the brief there (slack = Block Kit DM)\n" +
+      "  --strategy <brief|agent>  brief (default): deterministic reads + 1 model call;\n" +
+      "                      agent: the tool-calling loop. Also VALENTINE_STRATEGY / config\n" +
       "  --version           print version\n" +
       "  --help              this help\n\n" +
       pc.dim(
@@ -410,6 +435,8 @@ async function main(): Promise<void> {
   const positional = args.filter((a) => !a.startsWith("-"));
   const cmd = positional[0];
   const cfg = loadConfig();
+  const strategy = getFlag(args, "strategy");
+  if (strategy === "brief" || strategy === "agent") cfg.strategy = strategy;
 
   if (args.includes("--version") || cmd === "version") return void console.log(`valentine ${VERSION}`);
   if (cmd === "help" || args.includes("--help")) return printHelp();
@@ -419,7 +446,7 @@ async function main(): Promise<void> {
   if (cmd === "watch") return watch(cfg, args);
   if (!cmd) return printHelp();
 
-  await runLookup(cfg, cmd, json);
+  await runLookup(cfg, cmd, json, args);
 }
 
 main().catch((e) => {

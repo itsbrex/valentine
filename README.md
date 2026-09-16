@@ -42,11 +42,17 @@ moves a deal. There are no write tools in the codebase, by design.
 1. **A connector** (`src/connectors/`) — read-only CRM access behind a small
    `CRMConnector` interface. Attio, Affinity, and Salesforce out of the box;
    HubSpot is one new file away.
-2. **An agent** (`src/agent.ts`) — the loop: model thinks → calls a read tool →
-   gets the result → repeats → calls `submit_verdict`. ~40 lines, hand-rolled on
-   the Anthropic API so you can read every line. Runs on Anthropic models or
-   fully local ones — Ollama or in-process ONNX (then nothing leaves your
-   machine at all).
+2. **A brief** (`src/gather.ts` + `src/brief.ts`) — the default sweep. For a
+   domain the reads are always the same, so Valentine does them itself:
+   search → rank → context on the top matches. The verdict is a rule over that
+   evidence (any real signal = prior contact), so it never depends on a model
+   getting it right. The model makes exactly **one** call — the one-line
+   summary — with a timeout, a template fallback, and a fact-check (an owner or
+   a date the CRM didn't give us gets the line thrown out). Two CRMs on a local
+   LFM2.5-2.6B: **5–7 s**, down from ~90 s. The original tool-calling loop
+   (`src/agent.ts`) is still there behind `--strategy agent` for when you want
+   the model to steer. Runs on Anthropic models or fully local ones — Ollama or
+   in-process ONNX (then nothing leaves your machine at all).
 3. **A trigger** (`src/cli.ts`) — the CLI, the MCP server, `valentine slack`
    (a `/valentine` slash command), and `valentine watch` — a pre-meeting
    heads-up that reads the macOS Calendar (including Outlook/M365 accounts
@@ -67,6 +73,22 @@ Valentine is built to be driven by other agents, not just typed by hand.
   openclaws…).
 - Full instructions for agents live in [`AGENTS.md`](./AGENTS.md).
 
+## What you get back
+
+Every surface renders the same structured brief — verdict, one line, the facts,
+and click-to-act links (open the CRM record · website · LinkedIn):
+
+- **CLI** — colored block, facts, links as real hyperlinks in terminals that
+  support them (iTerm2, Terminal.app, WezTerm, kitty, VS Code). Add
+  `--notify slack` to also DM yourself the brief.
+- **`--json` / MCP** — `facts` (people, lists, notes, connection, dates) and
+  `facts.links` next to the verdict, so agents can act without parsing prose.
+- **Slack** — Block Kit for both the `/valentine` slash command and the
+  `valentine watch --notify slack` heads-up: a header per meeting, a verdict
+  line per attendee company, the summary, a field grid (owner · last touch ·
+  stage · connection · known contacts), the latest note, and link buttons.
+  Clean sources fold into one quiet line so the message stays short.
+
 ## Your keys, your data
 
 Runs with your CRM token, on your machine. Nothing leaves the fund. Keys are
@@ -76,7 +98,20 @@ stored locally at `~/.valentine/config.json` (or via env: `VALENTINE_ATTIO_KEY`,
 
 Prefer a local model — and no Anthropic key at all? Two ways, both defaulting
 to [LFM2.5-2.6B](https://huggingface.co/LiquidAI/LFM2.5-2.6B), a free
-open-weights 2.6B model with best-in-class tool calling:
+open-weights 2.6B model with best-in-class tool calling. Because the default
+sweep asks the model for one sentence and nothing else, smaller Liquid models
+work too — measured on the brief task with `node scripts/bench-models.mjs`
+(M1 Max, one CRM):
+
+| Ollama model | per call | size | notes |
+|---|---|---|---|
+| `hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M` (default) | ~1–2 s | 1.7 GB | best writing |
+| `hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q8_0` | ~0.5 s | 1.2 GB | reads fine, no `<think>` phase |
+| `hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0` | ~0.25 s | 380 MB | terse |
+
+The verdict, owner, last touch, stage and links come from the CRM either way.
+The model stays resident between sweeps (`VALENTINE_OLLAMA_KEEP_ALIVE`, default
+24h) so a pre-meeting heads-up never waits on a load.
 
 - **Ollama** (recommended) — `ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M`
   (~1.7 GB), then pick the Ollama provider in `valentine init`. Needs Ollama

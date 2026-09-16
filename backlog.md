@@ -64,6 +64,30 @@ Caveats to resolve later:
   extended-property mechanisms; design the calendar layer provider-agnostic like
   the CRM connector.
 
+## Fast path + rich output — SHIPPED 2026-09-16
+
+- **`strategy: brief` (default)** — deterministic CRM reads (`src/gather.ts`),
+  rule-based verdict + fact-grounded one-line summary from a single structured
+  model call (`src/brief.ts`), CRMs swept in parallel. Two-CRM sweep on local
+  LFM2.5-2.6B: 5–7 s, was ~90 s; the "llama-server returned invalid tool call
+  arguments" failures are gone because there are no tool calls. The agent loop
+  stays behind `--strategy agent` / `VALENTINE_STRATEGY=agent`.
+- **Ollama**: `structured()` uses a think-skipping prefill on LFM2.5 (its
+  template opens `<think>` unconditionally; `think:false` is a no-op and the
+  prefill cannot be combined with the `format` grammar), `format` on models that
+  answer directly. `keep_alive` 24h, `num_ctx` 8192 by default.
+- **Rich output**: `facts` + `links` on every verdict (Attio `web_url`,
+  Salesforce Lightning URL, website, LinkedIn search); Block Kit for the watch
+  DM and the slash command (`src/slackblocks.ts`); OSC 8 hyperlinks in the CLI;
+  `valentine <target> --notify slack`.
+- **Model choice**: `scripts/bench-models.mjs` compares local models on the
+  exact call Valentine makes. Liquid 2.6B / 1.2B-Instruct / 350M all produce
+  valid JSON; 2.6B writes best, 1.2B is the lean pick.
+- Parked: Affinity record deep links (needs the tenant subdomain — `whoami`
+  has it; wire it when someone on Affinity can verify the URL shape).
+  LFM2.5-8B-A1B (MoE, 1B active) as a "smarter, still fast" option — Ollama's
+  HF pull stalled here; try `hf download` + `ollama create`.
+
 ## Other
 - ~~Multi-CRM merge (showcase idea 9)~~ — shipped 2026-08 as multi-CRM sweeps:
   `crms: [primary, …]` in config / `VALENTINE_CRMS` env / `init --crms`. One

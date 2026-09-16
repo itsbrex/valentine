@@ -39,6 +39,19 @@ export interface Config {
   /** ONNX quantization — q4 (~1.9 GB) unless overridden. */
   onnxDtype?: OnnxDtype;
   slackSigningSecret?: string;
+  /** How a sweep runs. "brief" (default): deterministic CRM reads + one
+   *  structured model call for the summary. "agent": the original tool-calling
+   *  loop where the model decides what to read. VALENTINE_STRATEGY overrides. */
+  strategy?: SweepStrategy;
+}
+
+export type SweepStrategy = "brief" | "agent";
+
+/** Resolve the sweep strategy: env wins, then config, then brief. */
+export function sweepStrategy(cfg: Config): SweepStrategy {
+  const env = process.env.VALENTINE_STRATEGY?.trim().toLowerCase();
+  if (env === "agent" || env === "brief") return env;
+  return cfg.strategy === "agent" ? "agent" : "brief";
 }
 
 // Values that came from the environment at load time, per config object.

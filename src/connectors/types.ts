@@ -24,6 +24,8 @@ export interface CRMMatch {
   firstInteraction?: string;
   /** Number of linked people/contacts. */
   linkedPeople?: number;
+  /** Deep link to the record in the CRM's web app, when the API exposes one. */
+  url?: string;
 }
 
 export interface SearchQuery {
@@ -67,4 +69,36 @@ export interface Verdict {
   status?: string;
   /** Record IDs the verdict is based on. */
   citations: string[];
+  /** Structured evidence behind the verdict — what the rich surfaces (Slack
+   *  Block Kit, CLI, --json) render as fields and click-through links. */
+  facts?: BriefFacts;
+  /** Wall time of this source's sweep, ms. */
+  elapsedMs?: number;
+}
+
+/** A click-to-act link: the CRM record, the company site, a LinkedIn search. */
+export interface RecordLink {
+  label: string;
+  url: string;
+}
+
+/** Everything a deterministic sweep found, laid out for rendering. Every
+ *  field is a fact read from the CRM — nothing here comes from a model. */
+export interface BriefFacts {
+  /** Name of the record the verdict rests on. */
+  matchName?: string;
+  domain?: string;
+  /** How many records matched the target. */
+  matches: number;
+  connectionStrength?: string;
+  firstInteraction?: string;
+  lastEmail?: string;
+  lastMeeting?: string;
+  /** Linked people already in the CRM. */
+  people: string[];
+  /** List / pipeline memberships with stage. */
+  lists: { list: string; stage?: string }[];
+  /** Most recent note bodies, trimmed. */
+  notes: string[];
+  links: RecordLink[];
 }
