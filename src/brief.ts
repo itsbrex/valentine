@@ -223,6 +223,10 @@ export async function brief(
   // Clean = nothing to say beyond "nothing found". Don't spend a model call.
   if (!opts.noModel && j.verdict !== "clean") {
     const timeoutMs = opts.timeoutMs ?? 25_000;
+    // A referenced timer, cleared on settle: an unref'd one let Node's test
+    // runner exit before the race resolved ("Promise resolution is still
+    // pending but the event loop has already resolved") on Linux CI.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const out = await Promise.race([
         structured(client, {
@@ -232,11 +236,15 @@ export async function brief(
           schema: BRIEF_SCHEMA as unknown as Record<string, unknown>,
           max_tokens: 160,
         }),
-        new Promise<undefined>((r) => setTimeout(() => r(undefined), timeoutMs).unref?.()),
+        new Promise<undefined>((r) => {
+          timer = setTimeout(() => r(undefined), timeoutMs);
+        }),
       ]);
       summary = acceptSummary(out?.summary, j) ?? fallback;
     } catch {
       summary = fallback;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
