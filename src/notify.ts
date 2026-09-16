@@ -83,7 +83,13 @@ async function slackApi(token: string, method: string, payload: unknown): Promis
   return data;
 }
 
-async function slackDm(title: string, body: string): Promise<void> {
+/** Optional rich payload for channels that can render more than a line. */
+export interface NotifyExtra {
+  /** Slack Block Kit blocks; `text` (title + body) stays the fallback. */
+  blocks?: unknown[];
+}
+
+async function slackDm(title: string, body: string, extra: NotifyExtra = {}): Promise<void> {
   const token = process.env.VALENTINE_SLACK_BOT_TOKEN;
   const user = process.env.VALENTINE_SLACK_DM_USER;
   if (!token || !user)
@@ -95,11 +101,17 @@ async function slackDm(title: string, body: string): Promise<void> {
   await slackApi(token, "chat.postMessage", {
     channel: open.channel.id,
     text: `✦ ${title}\n${body}`,
+    ...(extra.blocks?.length ? { blocks: extra.blocks, unfurl_links: false, unfurl_media: false } : {}),
   });
 }
 
-export async function notify(channel: NotifyChannel, title: string, body: string): Promise<void> {
-  if (channel === "slack") return slackDm(title, body);
+export async function notify(
+  channel: NotifyChannel,
+  title: string,
+  body: string,
+  extra: NotifyExtra = {},
+): Promise<void> {
+  if (channel === "slack") return slackDm(title, body, extra);
   if (channel === "stdout" || process.platform !== "darwin") {
     console.log(`✦ ${title}\n${body.replace(/^/gm, "  ")}`);
     return;

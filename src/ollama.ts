@@ -2,17 +2,52 @@
 // surface as the Anthropic client (ModelClient), translated to Ollama's native
 // /api/chat. Requires a tool-calling model — LFM2.5 (default), llama3.1,
 // qwen2.5…. Everything stays on your machine — CRM data never leaves localhost.
+//
+// Two request shapes:
+//   messages.create — the agent loop (tools, multi-turn).
+//   structured      — the fast path: one turn in, one JSON object out. Uses
+//                     Ollama's `format` grammar on models that answer directly,
+//                     and a think-skipping prefill on reasoning models (LFM2.5's
+//                     template always opens a <think> block; the grammar and
+//                     the prefill can't be combined, so it's one or the other).
+//
+// Tunables (env): VALENTINE_OLLAMA_KEEP_ALIVE (default 24h — keep the model
+// resident so a pre-meeting sweep never pays the load), VALENTINE_OLLAMA_NUM_CTX
+// (default 8192 — a sweep needs ~1.5k tokens; a small KV cache loads faster and
+// leaves memory for everything else).
 
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ModelClient } from "./models.js";
+import type { ModelClient, StructuredRequest } from "./models.js";
 import { stripThink, parseLfmToolCalls } from "./lfm.js";
+import { parseJsonLoose } from "./brief.js";
+
+const KEEP_ALIVE = process.env.VALENTINE_OLLAMA_KEEP_ALIVE ?? "24h";
+const NUM_CTX = Number(process.env.VALENTINE_OLLAMA_NUM_CTX ?? 8192);
 
 export class OllamaClient implements ModelClient {
   /** Ollama doesn't issue tool-call ids; mint stable local ones. */
   private toolSeq = 0;
+  /** Per model: does the chat template force a <think> block open? */
+  private thinkTemplate = new Map<string, Promise<boolean>>();
 
   constructor(private host: string) {
     this.host = host.replace(/\/+$/, "");
+  }
+
+  private async chat(body: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.host}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stream: false, keep_alive: KEEP_ALIVE, ...body }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(
+        `Ollama ${res.status} at ${this.host}: ${text.slice(0, 200)} — ` +
+          "is `ollama serve` running and the model pulled?",
+      );
+    }
+    return res.json();
   }
 
   messages = {
@@ -26,34 +61,59 @@ export class OllamaClient implements ModelClient {
       // Thinking models (LFM2.5…) occasionally burn a turn on reasoning alone:
       // `thinking` set, content empty, no tool_calls. One retry recovers it.
       for (let attempt = 0; ; attempt++) {
-        const res = await fetch(`${this.host}/api/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: req.model,
-            stream: false,
-            options: { num_predict: req.max_tokens },
-            tools: (req.tools as any[]).map((t) => ({
-              type: "function",
-              function: { name: t.name, description: t.description, parameters: t.input_schema },
-            })),
-            messages: toOllama(req.system, req.messages),
-          }),
+        const data = await this.chat({
+          model: req.model,
+          options: { num_predict: req.max_tokens, num_ctx: NUM_CTX },
+          tools: (req.tools as any[]).map((t) => ({
+            type: "function",
+            function: { name: t.name, description: t.description, parameters: t.input_schema },
+          })),
+          messages: toOllama(req.system, req.messages),
         });
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(
-            `Ollama ${res.status} at ${this.host}: ${text.slice(0, 200)} — ` +
-              "is `ollama serve` running and the model pulled?",
-          );
-        }
-        const data: any = await res.json();
         const content = this.fromOllama(data?.message);
         if (content.length === 0 && data?.message?.thinking && attempt === 0) continue;
         return { content };
       }
     },
   };
+
+  /** One structured turn. See the file header for the grammar/prefill split. */
+  structured = async (req: StructuredRequest): Promise<Record<string, unknown> | undefined> => {
+    const prefill = await this.forcesThink(req.model);
+    const messages: any[] = [
+      { role: "system", content: req.system },
+      { role: "user", content: req.user },
+    ];
+    // An assistant turn at the end is continued, not answered — so an empty
+    // think block skips the reasoning phase entirely (10× fewer tokens).
+    if (prefill) messages.push({ role: "assistant", content: "<think>\n</think>\n" });
+    const data = await this.chat({
+      model: req.model,
+      options: { num_predict: req.max_tokens, num_ctx: NUM_CTX, temperature: 0 },
+      ...(prefill ? {} : { format: req.schema }),
+      messages,
+    });
+    return parseJsonLoose(String(data?.message?.content ?? ""));
+  };
+
+  /** True when the model's chat template opens `<think>` in the generation
+   *  prompt (LFM2.5 does) — those models reason unconditionally and Ollama's
+   *  `think: false` is a no-op for them. Cached per model; unknown → false. */
+  private forcesThink(model: string): Promise<boolean> {
+    let p = this.thinkTemplate.get(model);
+    if (!p) {
+      p = fetch(`${this.host}/api/show`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      })
+        .then((r) => (r.ok ? r.json() : {}))
+        .then((d: any) => /add_generation_prompt[\s\S]{0,200}<think>/.test(String(d?.template ?? "")))
+        .catch(() => false);
+      this.thinkTemplate.set(model, p);
+    }
+    return p;
+  }
 
   /** Ollama response message → Anthropic-shaped content blocks. LFM2.5 emits
    *  <think> reasoning and sometimes raw <|tool_call_start|> markers in the

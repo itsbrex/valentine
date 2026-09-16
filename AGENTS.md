@@ -75,9 +75,27 @@ is set — it errors out with instructions instead.
   "owner": "Sarah Lee",            // optional
   "lastTouch": "2026-05-12",       // optional
   "status": "passed, too early",   // optional
-  "citations": ["rec_abc", "rec_def"]
+  "citations": ["rec_abc", "rec_def"],
+  "facts": {                       // structured evidence — every field read from the CRM
+    "matchName": "Acme", "domain": "acme.com", "matches": 1,
+    "connectionStrength": "Very strong", "firstInteraction": "2025-01-02",
+    "lastEmail": "2026-05-12", "lastMeeting": "2026-04-01",
+    "people": ["Jane Founder"], "lists": [{ "list": "Passed" }],
+    "notes": ["passed, too early"],
+    "links": [                     // click-to-act
+      { "label": "Open in Attio", "url": "https://app.attio.com/<ws>/company/rec_abc" },
+      { "label": "Website", "url": "https://acme.com" },
+      { "label": "LinkedIn", "url": "https://www.linkedin.com/search/results/companies/?keywords=Acme" }
+    ]
+  },
+  "elapsedMs": 3200
 }
 ```
+
+`verdict`, `owner`, `lastTouch`, `status`, `citations` and `facts` are computed
+from CRM reads, not by the model — the model only writes `summary`, and only when
+its line is grounded in `facts` (otherwise a template line is used). Agents that
+want to act on the result should read `facts.links`, not parse `summary`.
 
 Exit codes (use these to branch without parsing): `0` clean · `10` prior
 contact · `20` ambiguous · `1` error.

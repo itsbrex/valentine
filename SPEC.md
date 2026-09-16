@@ -136,10 +136,16 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
 
 ## 11. Output
 
-- **Human:** a colored verdict block (⚠ amber / ✅ green / ❓ grey), owner + last
-  touch + status + "↗ open in CRM" link, then a one-line summary.
+- **Human:** a colored verdict block (⚠ amber / ✅ green / ❓ grey), the one-line
+  summary, owner + last touch + status, the facts (connection, first contact,
+  known contacts, note), and click-through links (OSC 8 hyperlinks: open in
+  CRM · website · LinkedIn).
 - **`--json`:** `{ verdict: "prior_contact|clean|ambiguous", summary, owner,
-  last_touch, status, citations: [recordIds], crm_links: [...] }`.
+  lastTouch, status, citations: [recordIds], facts: { …, links: [{label,url}] },
+  elapsedMs }` — see AGENTS.md for the full shape.
+- **Slack (watch DM + `/valentine`):** Block Kit — header, per-target verdict
+  line, summary, a field grid (owner / last touch / stage / connection / known
+  contacts), the latest note, link buttons. Plain `text` fallback always set.
 - **Exit codes:** `0` clean · `10` prior contact · `20` ambiguous · `1` error.
   (Lets `watch`/Slack/scripts branch on the result.)
 
@@ -153,9 +159,14 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
 
 ## 13. Performance & cost targets
 
-- p50 end-to-end < 8s on a warm key.
-- ≤ 6 tool calls per sweep (search company, search people, read notes, done).
-- Bounded fan-out: cap matches examined (e.g. top 10) and **say so** if truncated.
+- p50 end-to-end < 8s on a warm key — measured 5–7 s for a two-CRM sweep on a
+  local LFM2.5-2.6B (was ~90 s with the agent loop on the same model).
+- Default strategy `brief`: the CRM reads are deterministic (search → rank →
+  context on the top 2), the verdict is a rule over the evidence, and the model
+  makes exactly ONE call — the summary line — with a timeout and a template
+  fallback. `strategy: agent` keeps the ≤ 10-turn tool loop for those who want
+  the model to steer.
+- Bounded fan-out: cap matches examined (top 10) and **say so** if truncated.
 
 ## 14. Roadmap / phasing
 
