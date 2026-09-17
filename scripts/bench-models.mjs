@@ -54,7 +54,7 @@ for (const model of models) {
     times.push(ms);
     const summary = acceptSummary(out?.summary, c.j);
     if (summary) ok++;
-    console.log(`   ${String(ms).padStart(5)}ms  ${c.target.padEnd(18)} ${summary ?? `✗ ${JSON.stringify(out).slice(0, 100)}`}`);
+    console.log(`   ${String(ms).padStart(5)}ms  ${c.target.padEnd(18)} ${summary ?? `✗ ${JSON.stringify(out ?? null).slice(0, 100)}`}`);
   }
   console.log(`   median ${median(times)}ms · valid ${ok}/${CASES.length}`);
 }

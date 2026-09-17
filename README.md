@@ -106,8 +106,17 @@ work too — measured on the brief task with `node scripts/bench-models.mjs`
 | Ollama model | per call | size | notes |
 |---|---|---|---|
 | `hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M` (default) | ~1–2 s | 1.7 GB | best writing |
+| `hf.co/LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M` | ~1 s | 5.2 GB | MoE (1B active); most faithful to the facts, drier prose |
 | `hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q8_0` | ~0.5 s | 1.2 GB | reads fine, no `<think>` phase |
 | `hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0` | ~0.25 s | 380 MB | terse |
+
+If `ollama pull hf.co/…` stalls, fetch the GGUF with the Hugging Face CLI and
+register it: `hf download LiquidAI/LFM2.5-8B-A1B-GGUF LFM2.5-8B-A1B-Q4_K_M.gguf
+--local-dir ~/models/lfm`, then a one-line Modelfile (`FROM ./LFM2.5-8B-A1B-Q4_K_M.gguf`)
+and `ollama create lfm2.5-8b-a1b:q4 -f Modelfile`. Valentine detects on first
+use whether a model reasons unconditionally (both LFM2.5 sizes do, one by
+template, one by habit) and skips that phase with a prefill — cached in
+`~/.valentine/model-traits.json`.
 
 The verdict, owner, last touch, stage and links come from the CRM either way.
 The model stays resident between sweeps (`VALENTINE_OLLAMA_KEEP_ALIVE`, default

@@ -85,8 +85,13 @@ Caveats to resolve later:
   valid JSON; 2.6B writes best, 1.2B is the lean pick.
 - Parked: Affinity record deep links (needs the tenant subdomain — `whoami`
   has it; wire it when someone on Affinity can verify the URL shape).
-  LFM2.5-8B-A1B (MoE, 1B active) as a "smarter, still fast" option — Ollama's
-  HF pull stalled here; try `hf download` + `ollama create`.
+- LFM2.5-8B-A1B (MoE, 1B active) — landed via `hf download` + `ollama create`
+  (`~/models/lfm`, registered `lfm2.5-8b-a1b:q4`). Its template does NOT open
+  `<think>`, but the model does on its own, so template sniffing was not
+  enough: `OllamaClient` now probes once per model (`think:false` + one word;
+  a `thinking` field or leading `<think>` = forced) and caches the answer in
+  `~/.valentine/model-traits.json`. Bench: ~1 s, 4/4 grounded, prose drier
+  than the 2.6B. Listed in `init`; 2.6B stays default for the 1.7 GB footprint.
 
 ## Other
 - ~~Multi-CRM merge (showcase idea 9)~~ — shipped 2026-08 as multi-CRM sweeps:

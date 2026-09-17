@@ -103,3 +103,92 @@ test("empty turn without thinking is NOT retried (genuine empty answer)", () =>
     assert.equal(count(), 1);
     assert.deepEqual(content, []);
   }));
+
+// structured(): reasoning models get a think-skipping prefill and no grammar;
+// models that answer directly get Ollama's `format` grammar. Whether a model
+// reasons is learned once (template, else a probe) and cached on disk.
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+function withRoutes(routes: Record<string, (body: any) => unknown>, fn: (log: { url: string; body: any }[]) => Promise<void>) {
+  const real = globalThis.fetch;
+  const log: { url: string; body: any }[] = [];
+  globalThis.fetch = (async (url: URL | string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    log.push({ url: String(url), body });
+    const route = Object.keys(routes).find((k) => String(url).endsWith(k));
+    return new Response(JSON.stringify(route ? routes[route](body) : {}), { status: 200 });
+  }) as typeof fetch;
+  return fn(log).finally(() => {
+    globalThis.fetch = real;
+  });
+}
+
+const sreq = { model: "m", system: "s", user: "u", schema: { type: "object" }, max_tokens: 50 };
+
+test("structured: template that opens <think> → prefill, no format, think block stripped", async () => {
+  process.env.VALENTINE_MODEL_TRAITS_FILE = join(mkdtempSync(join(tmpdir(), "vt-")), "traits.json");
+  await withRoutes(
+    {
+      "/api/show": () => ({ template: '{%- if add_generation_prompt -%}{{- "<|im_start|>assistant\\n<think>" -}}{%- endif -%}' }),
+      "/api/chat": () => ({ message: { content: '<think>\n</think>\n{"summary":"ok"}' } }),
+    },
+    async (log) => {
+      const out = await new OllamaClient("http://localhost:11434").structured!(sreq);
+      assert.deepEqual(out, { summary: "ok" });
+      const chat = log.find((l) => l.url.endsWith("/api/chat"))!.body;
+      assert.equal(chat.format, undefined);
+      assert.deepEqual(chat.messages.at(-1), { role: "assistant", content: "<think>\n</think>\n" });
+    },
+  );
+});
+
+test("structured: clean template but the probe still thinks (8B-A1B) → prefill; result cached on disk", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), "vt-")), "traits.json");
+  process.env.VALENTINE_MODEL_TRAITS_FILE = file;
+  let chats = 0;
+  await withRoutes(
+    {
+      "/api/show": () => ({ template: '{%- if add_generation_prompt -%}{{- "<|im_start|>assistant\\n" -}}{%- endif -%}' }),
+      "/api/chat": (body) => (++chats, body.think === false ? { message: { thinking: "hmm", content: "OK" } } : { message: { content: '{"summary":"ok"}' } }),
+    },
+    async (log) => {
+      const client = new OllamaClient("http://localhost:11434");
+      await client.structured!(sreq);
+      const probe = log.filter((l) => l.url.endsWith("/api/chat"))[0].body;
+      assert.equal(probe.think, false, "first chat is the probe");
+      const real = log.filter((l) => l.url.endsWith("/api/chat"))[1].body;
+      assert.equal(real.format, undefined);
+      assert.equal(real.messages.at(-1).role, "assistant");
+      assert.equal(JSON.parse(readFileSync(file, "utf8")).m.forcesThink, true);
+    },
+  );
+  // A fresh client reads the cached trait: no /api/show, no probe.
+  await withRoutes(
+    { "/api/chat": () => ({ message: { content: '{"summary":"again"}' } }) },
+    async (log) => {
+      const out = await new OllamaClient("http://localhost:11434").structured!(sreq);
+      assert.deepEqual(out, { summary: "again" });
+      assert.equal(log.length, 1);
+      assert.ok(log[0].url.endsWith("/api/chat"));
+    },
+  );
+});
+
+test("structured: a model that answers directly gets the format grammar, no prefill", async () => {
+  process.env.VALENTINE_MODEL_TRAITS_FILE = join(mkdtempSync(join(tmpdir(), "vt-")), "traits.json");
+  await withRoutes(
+    {
+      "/api/show": () => ({ template: "plain" }),
+      "/api/chat": (body) => (body.think === false ? { message: { content: "OK" } } : { message: { content: '{"summary":"direct"}' } }),
+    },
+    async (log) => {
+      const out = await new OllamaClient("http://localhost:11434").structured!(sreq);
+      assert.deepEqual(out, { summary: "direct" });
+      const real = log.filter((l) => l.url.endsWith("/api/chat")).at(-1)!.body;
+      assert.deepEqual(real.format, { type: "object" });
+      assert.equal(real.messages.at(-1).role, "user");
+    },
+  );
+});

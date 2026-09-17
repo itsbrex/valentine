@@ -110,7 +110,7 @@ export function templateSummary(j: Judged, target: string): string {
 
 export const BRIEF_SYSTEM = `You write one-line pre-meeting briefs from CRM facts.
 Reply with a JSON object: {"summary": string}.
-- summary: ONE sentence, at most 22 words, plain text, no markdown, no domain name.
+- summary: ONE sentence, at most 22 words, plain text, no markdown, no domain name. Write prose; never copy the field labels below.
 - Lead with the most actionable fact: the outcome or deal stage if there is one, who owns the relationship, when it was last touched.
 - State facts only. Do not characterize them (no "active", "strong", "recent") unless the word is in the facts, and never say what is missing.
 - Use only the facts given. Never invent people, dates, owners, or outcomes. "Their people" are contacts at the company, not the owner.
@@ -187,7 +187,7 @@ export async function structured(
 export function acceptSummary(s: unknown, j?: Judged): string | undefined {
   if (typeof s !== "string") return undefined;
   const t = s.replace(/\s+/g, " ").trim();
-  if (t.length < 8 || t.length > 220) return undefined;
+  if (t.length < 8 || t.length > 280) return undefined;
   if (/^\{|\bnull\b|undefined/.test(t)) return undefined;
   if (!j) return t;
   if (!j.owner && /\b(own(s|ed|er|ership)?|handl(es|ed|ing))\b/i.test(t)) return undefined;

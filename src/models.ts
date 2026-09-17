@@ -61,6 +61,7 @@ export const DEFAULT_OLLAMA_MODEL = "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M";
  *  never depends on the model — only the sentence does. */
 export const OLLAMA_MODELS: ModelOption[] = [
   { id: DEFAULT_OLLAMA_MODEL, label: "LFM2.5-2.6B Q4_K_M — best writing, ~1–2 s (recommended)" },
+  { id: "hf.co/LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M", label: "LFM2.5-8B-A1B Q4_K_M — MoE, most faithful, ~1 s, 5.2 GB" },
   { id: "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q8_0", label: "LFM2.5-1.2B Instruct Q8 — ~0.5 s, 1.2 GB" },
   { id: "hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0", label: "LFM2.5-350M Q8 — ~0.25 s, 380 MB, terse" },
 ];

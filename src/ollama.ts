@@ -7,15 +7,19 @@
 //   messages.create — the agent loop (tools, multi-turn).
 //   structured      — the fast path: one turn in, one JSON object out. Uses
 //                     Ollama's `format` grammar on models that answer directly,
-//                     and a think-skipping prefill on reasoning models (LFM2.5's
-//                     template always opens a <think> block; the grammar and
-//                     the prefill can't be combined, so it's one or the other).
+//                     and a think-skipping prefill on reasoning models (LFM2.5
+//                     always opens a <think> block — by template on the 2.6B,
+//                     by habit on the 8B-A1B; the grammar and the prefill can't
+//                     be combined, so it's one or the other; see forcesThink).
 //
 // Tunables (env): VALENTINE_OLLAMA_KEEP_ALIVE (default 24h — keep the model
 // resident so a pre-meeting sweep never pays the load), VALENTINE_OLLAMA_NUM_CTX
 // (default 8192 — a sweep needs ~1.5k tokens; a small KV cache loads faster and
 // leaves memory for everything else).
 
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelClient, StructuredRequest } from "./models.js";
 import { stripThink, parseLfmToolCalls } from "./lfm.js";
@@ -23,6 +27,30 @@ import { parseJsonLoose } from "./brief.js";
 
 const KEEP_ALIVE = process.env.VALENTINE_OLLAMA_KEEP_ALIVE ?? "24h";
 const NUM_CTX = Number(process.env.VALENTINE_OLLAMA_NUM_CTX ?? 8192);
+
+// Per-model traits learned at runtime, persisted so the probe runs once per
+// machine rather than once per process (the watch daemon is a new process
+// every 5 minutes). Override or reset by editing/deleting the file.
+const traitsFile = () =>
+  process.env.VALENTINE_MODEL_TRAITS_FILE ?? join(homedir(), ".valentine", "model-traits.json");
+type Traits = Record<string, { forcesThink?: boolean }>;
+function readTraits(): Traits {
+  try {
+    return JSON.parse(readFileSync(traitsFile(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function writeTrait(model: string, trait: Traits[string]): void {
+  try {
+    const all = readTraits();
+    all[model] = { ...all[model], ...trait };
+    mkdirSync(dirname(traitsFile()), { recursive: true, mode: 0o700 });
+    writeFileSync(traitsFile(), JSON.stringify(all, null, 2), { mode: 0o600 });
+  } catch {
+    /* read-only home, sandbox… — the in-memory cache still holds it */
+  }
+}
 
 export class OllamaClient implements ModelClient {
   /** Ollama doesn't issue tool-call ids; mint stable local ones. */
@@ -96,23 +124,48 @@ export class OllamaClient implements ModelClient {
     return parseJsonLoose(String(data?.message?.content ?? ""));
   };
 
-  /** True when the model's chat template opens `<think>` in the generation
-   *  prompt (LFM2.5 does) — those models reason unconditionally and Ollama's
-   *  `think: false` is a no-op for them. Cached per model; unknown → false. */
+  /** True when the model reasons whether you ask it to or not — Ollama's
+   *  `think: false` is a no-op for it, so the prefill is the only way to skip
+   *  the reasoning phase. Two tells, checked in order and cached per model
+   *  (in memory, then on disk at ~/.valentine/model-traits.json):
+   *    1. the chat template opens `<think>` in the generation prompt
+   *       (LFM2.5-2.6B / -1.2B-Thinking);
+   *    2. a one-word probe with `think: false` still comes back with a
+   *       `thinking` field or a leading `<think>` (LFM2.5-8B-A1B — the
+   *       template is clean, the model opens the tag itself).
+   *  Unknown / unreachable → false (plain `format` path). */
   private forcesThink(model: string): Promise<boolean> {
     let p = this.thinkTemplate.get(model);
     if (!p) {
-      p = fetch(`${this.host}/api/show`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model }),
-      })
-        .then((r) => (r.ok ? r.json() : {}))
-        .then((d: any) => /add_generation_prompt[\s\S]{0,200}<think>/.test(String(d?.template ?? "")))
-        .catch(() => false);
+      p = (async () => {
+        const cached = readTraits()[model]?.forcesThink;
+        if (typeof cached === "boolean") return cached;
+        const result = await this.detectForcedThink(model);
+        writeTrait(model, { forcesThink: result });
+        return result;
+      })().catch(() => false);
       this.thinkTemplate.set(model, p);
     }
     return p;
+  }
+
+  private async detectForcedThink(model: string): Promise<boolean> {
+    const show = await fetch(`${this.host}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    })
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}));
+    if (/add_generation_prompt[\s\S]{0,200}<think>/.test(String((show as any)?.template ?? ""))) return true;
+    const probe = await this.chat({
+      model,
+      think: false,
+      options: { num_predict: 48, num_ctx: NUM_CTX, temperature: 0 },
+      messages: [{ role: "user", content: "Reply with the single word OK." }],
+    });
+    const msg = probe?.message ?? {};
+    return Boolean(msg.thinking) || /^\s*<think>/.test(String(msg.content ?? ""));
   }
 
   /** Ollama response message → Anthropic-shaped content blocks. LFM2.5 emits
