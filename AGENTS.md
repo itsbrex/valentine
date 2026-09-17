@@ -8,12 +8,26 @@ verdict. It never writes, sends, or moves anything.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | yes | Powers the agent loop. |
+| `ANTHROPIC_API_KEY` | yes* | Powers the agent loop. *Not needed with the Ollama provider. |
 | `VALENTINE_ATTIO_KEY` | one CRM key | Read-only Attio token. |
 | `VALENTINE_AFFINITY_KEY` | one CRM key | Use instead of the Attio key for Affinity. |
+| `VALENTINE_SALESFORCE_KEY` | one CRM key | Salesforce REST access token (read-only user). |
+| `VALENTINE_SALESFORCE_INSTANCE_URL` | with the SF key | e.g. `https://yourorg.my.salesforce.com`. |
+| `VALENTINE_SALESFORCE_SID_COMMAND` | no | Instead of the SF key: shell command that prints a fresh access token (re-run on 401). |
+| `VALENTINE_CRMS` | no | Sweep several CRMs, first is primary — e.g. `salesforce,attio` (company org + personal CRM). Needs each CRM's credentials. Multi-CRM JSON adds a `sources[]` array; exit code reflects the worst verdict. |
 | `VALENTINE_MODEL` | no | Defaults to `claude-haiku-4-5`. |
+| `VALENTINE_OLLAMA_HOST` | no | Ollama provider only. Wins over `OLLAMA_HOST` if both are set. |
+| `OLLAMA_HOST` | no | Ollama provider only. Defaults to `http://127.0.0.1:11434`. |
+| `VALENTINE_SLACK_SIGNING_SECRET` | for `valentine slack` | Slack app signing secret. Falls back to `SLACK_SIGNING_SECRET`. |
+| `VALENTINE_SLACK_PORT` | no | Port for `valentine slack` (or `--port`). Defaults to `3141`. |
+| `VALENTINE_SLACK_BOT_TOKEN` | for `watch --notify slack` | Bot token (scopes `chat:write` + `im:write`) for the DM notifier. |
+| `VALENTINE_SLACK_DM_USER` | for `watch --notify slack` | Member ID (`U…`) the heads-up DMs go to. |
 
-Set `ANTHROPIC_API_KEY` plus exactly one of the two CRM keys.
+Set `ANTHROPIC_API_KEY` plus exactly one CRM key. Which CRM and which model
+provider are *choices*, not secrets — they live in `~/.valentine/config.json`
+and are set with headless `init` (below). To run fully local, init with
+`--provider ollama` (a tool-calling model: llama3.1, qwen2.5…) — then no
+Anthropic key is required and nothing leaves the machine.
 
 ## Install + one-shot verdict (headless)
 
@@ -34,6 +48,15 @@ To persist config to `~/.valentine/config.json` without prompts:
 npx valentine-agent init --non-interactive \
   --crm attio --crm-key "$VALENTINE_ATTIO_KEY" \
   --anthropic-key "$ANTHROPIC_API_KEY" --model claude-haiku-4-5
+
+# Salesforce instead of Attio:
+npx valentine-agent init -y --crm salesforce \
+  --crm-key "$VALENTINE_SALESFORCE_KEY" \
+  --instance-url "$VALENTINE_SALESFORCE_INSTANCE_URL" \
+  --anthropic-key "$ANTHROPIC_API_KEY"
+
+# Fully local via Ollama (no Anthropic key):
+npx valentine-agent init -y --provider ollama --model llama3.1
 ```
 
 `--non-interactive` is implied automatically when stdin is not a TTY, so in most
@@ -52,9 +75,27 @@ is set — it errors out with instructions instead.
   "owner": "Sarah Lee",            // optional
   "lastTouch": "2026-05-12",       // optional
   "status": "passed, too early",   // optional
-  "citations": ["rec_abc", "rec_def"]
+  "citations": ["rec_abc", "rec_def"],
+  "facts": {                       // structured evidence — every field read from the CRM
+    "matchName": "Acme", "domain": "acme.com", "matches": 1,
+    "connectionStrength": "Very strong", "firstInteraction": "2025-01-02",
+    "lastEmail": "2026-05-12", "lastMeeting": "2026-04-01",
+    "people": ["Jane Founder"], "lists": [{ "list": "Passed" }],
+    "notes": ["passed, too early"],
+    "links": [                     // click-to-act
+      { "label": "Open in Attio", "url": "https://app.attio.com/<ws>/company/rec_abc" },
+      { "label": "Website", "url": "https://acme.com" },
+      { "label": "LinkedIn", "url": "https://www.linkedin.com/search/results/companies/?keywords=Acme" }
+    ]
+  },
+  "elapsedMs": 3200
 }
 ```
+
+`verdict`, `owner`, `lastTouch`, `status`, `citations` and `facts` are computed
+from CRM reads, not by the model — the model only writes `summary`, and only when
+its line is grounded in `facts` (otherwise a template line is used). Agents that
+want to act on the result should read `facts.links`, not parse `summary`.
 
 Exit codes (use these to branch without parsing): `0` clean · `10` prior
 contact · `20` ambiguous · `1` error.

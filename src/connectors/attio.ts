@@ -13,6 +13,8 @@ const BASE = "https://api.attio.com/v2";
 interface Rec {
   id: { record_id: string };
   values: Record<string, any>;
+  /** Deep link into app.attio.com — present on every record the API returns. */
+  web_url?: string;
 }
 
 export class AttioConnector implements CRMConnector {
@@ -38,8 +40,11 @@ export class AttioConnector implements CRMConnector {
   }
 
   async whoami(): Promise<{ workspace: string }> {
+    // Live-verified 2026-08: /self returns a FLAT token-introspection object
+    // (workspace_name, workspace_id at top level) — no `data` wrapper.
     const data = await this.req("/self");
-    return { workspace: data?.data?.workspace_name ?? data?.data?.workspace_id ?? "unknown" };
+    const d = data?.data ?? data;
+    return { workspace: d?.workspace_name ?? d?.workspace_id ?? "unknown" };
   }
 
   async search(q: SearchQuery): Promise<CRMMatch[]> {
@@ -75,6 +80,7 @@ export class AttioConnector implements CRMConnector {
         lastInteraction: li ? `${li.type} · ${li.date}` : undefined,
         firstInteraction: dateOf(interaction(v.first_interaction)),
         linkedPeople: count(v.team) ?? count(v.associated_people),
+        ...(r.web_url ? { url: r.web_url } : {}),
       };
     });
   }
