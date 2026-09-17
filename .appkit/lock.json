@@ -14,6 +14,20 @@
         "date": "2026-08-10",
         "repo": "valentine"
       }
+    },
+    "apps/valentine-lab.html": {
+      "recipe": "workspace",
+      "appkitVersion": "1.1.0",
+      "recipeDigest": "f62f31b15d9d62e56f7b91341e7d7ceb0a309e1287549dccef6de5f7d0c14dbe",
+      "generatedSha": "18e093ee05e0395da5eac3db23d770325669cbb26cfefed558626f0ecccac517",
+      "generatedAt": "2026-09-17",
+      "placeholders": {
+        "title": "Valentine Lab",
+        "badge": "LAB",
+        "slug": "app-valentine-lab",
+        "date": "2026-09-17",
+        "repo": "valentine"
+      }
     }
   }
 }

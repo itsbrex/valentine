@@ -23,7 +23,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelClient, StructuredRequest } from "./models.js";
 import { stripThink, parseLfmToolCalls } from "./lfm.js";
-import { parseJsonLoose } from "./brief.js";
+import { parseJsonLoose, lastUsage } from "./brief.js";
 
 const KEEP_ALIVE = process.env.VALENTINE_OLLAMA_KEEP_ALIVE ?? "24h";
 const NUM_CTX = Number(process.env.VALENTINE_OLLAMA_NUM_CTX ?? 8192);
@@ -120,6 +120,14 @@ export class OllamaClient implements ModelClient {
       options: { num_predict: req.max_tokens, num_ctx: NUM_CTX, temperature: 0 },
       ...(prefill ? {} : { format: req.schema }),
       messages,
+    });
+    lastUsage.set(req.model, {
+      promptTokens: data?.prompt_eval_count,
+      genTokens: data?.eval_count,
+      loadMs: Math.round((data?.load_duration ?? 0) / 1e6),
+      promptMs: Math.round((data?.prompt_eval_duration ?? 0) / 1e6),
+      genMs: Math.round((data?.eval_duration ?? 0) / 1e6),
+      mode: prefill ? "prefill" : "format",
     });
     return parseJsonLoose(String(data?.message?.content ?? ""));
   };

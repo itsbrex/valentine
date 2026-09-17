@@ -7,7 +7,7 @@
 
 import type { CRMConnector, CRMMatch, CRMContext, Verdict, BriefFacts, RecordLink } from "./connectors/types.js";
 import type { ModelClient } from "./models.js";
-import { gather, hasSignal, type Evidence } from "./gather.js";
+import { gather, hasSignal, type Evidence, type TraceFn, type ModelUsage } from "./gather.js";
 
 export interface Judged {
   verdict: Verdict["verdict"];
@@ -204,7 +204,13 @@ export interface BriefOptions {
   noModel?: boolean;
   /** Give up on the model after this long and use the template. */
   timeoutMs?: number;
+  /** Receive every step as it happens (search, context, judge, model…). */
+  trace?: TraceFn;
 }
+
+/** Last usage reported by a provider's structured() call, keyed by model.
+ *  Providers that know their token counts set it; the trace reads it once. */
+export const lastUsage = new Map<string, ModelUsage>();
 
 /** Sweep one CRM for a target and return a verdict with structured facts. */
 export async function brief(
@@ -215,14 +221,21 @@ export async function brief(
   opts: BriefOptions = {},
 ): Promise<Verdict> {
   const t0 = Date.now();
-  const ev = await gather(crm, target);
+  const trace = opts.trace ?? (() => {});
+  const ev = await gather(crm, target, { trace });
   const j = judge(ev, crm.name);
+  trace({ type: "judge", crm: crm.name, verdict: j.verdict, owner: j.owner, lastTouch: j.lastTouch, status: j.status });
   const fallback = templateSummary(j, target);
   let summary = fallback;
 
   // Clean = nothing to say beyond "nothing found". Don't spend a model call.
-  if (!opts.noModel && j.verdict !== "clean") {
+  if (opts.noModel) trace({ type: "model.skip", crm: crm.name, reason: "noModel" });
+  else if (j.verdict === "clean") trace({ type: "model.skip", crm: crm.name, reason: "clean verdict — nothing to summarize" });
+  else {
     const timeoutMs = opts.timeoutMs ?? 25_000;
+    const user = briefUserPrompt(j, target, crm.name);
+    trace({ type: "model.start", crm: crm.name, model, prompt: user });
+    const m0 = Date.now();
     // A referenced timer, cleared on settle: an unref'd one let Node's test
     // runner exit before the race resolved ("Promise resolution is still
     // pending but the event loop has already resolved") on Linux CI.
@@ -232,7 +245,7 @@ export async function brief(
         structured(client, {
           model,
           system: BRIEF_SYSTEM,
-          user: briefUserPrompt(j, target, crm.name),
+          user,
           schema: BRIEF_SCHEMA as unknown as Record<string, unknown>,
           max_tokens: 160,
         }),
@@ -240,13 +253,23 @@ export async function brief(
           timer = setTimeout(() => r(undefined), timeoutMs);
         }),
       ]);
-      summary = acceptSummary(out?.summary, j) ?? fallback;
-    } catch {
+      const accepted = acceptSummary(out?.summary, j);
+      summary = accepted ?? fallback;
+      trace({
+        type: "model.end", crm: crm.name, model, ms: Date.now() - m0,
+        raw: typeof out?.summary === "string" ? out.summary : out === undefined ? undefined : JSON.stringify(out),
+        summary, accepted: !!accepted,
+        reason: accepted ? undefined : out === undefined ? `no answer within ${timeoutMs} ms (or unparseable)` : "rejected by grounding check — template used",
+        usage: lastUsage.get(model),
+      });
+    } catch (e: any) {
       summary = fallback;
+      trace({ type: "model.end", crm: crm.name, model, ms: Date.now() - m0, accepted: false, reason: `error: ${e?.message ?? e}`, summary });
     } finally {
       clearTimeout(timer);
     }
   }
+  trace({ type: "source.done", crm: crm.name, verdict: j.verdict, ms: Date.now() - t0, summary });
 
   return {
     verdict: j.verdict,

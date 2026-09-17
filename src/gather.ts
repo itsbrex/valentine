@@ -16,6 +16,30 @@ export interface Target {
   raw: string;
 }
 
+/** A step in a sweep, for live instrumentation (the lab dashboard, verbose
+ *  logs). Pure data; emitted through `TraceFn` when a caller asks for one. */
+export type TraceEvent =
+  | { type: "search"; crm: string; object: "companies" | "people"; by: "domain" | "name"; term: string; ms: number; matches: number }
+  | { type: "context"; crm: string; recordId: string; name?: string; ms: number; notes: number; lists: number; people: number }
+  | { type: "rank"; crm: string; top?: string; matches: number }
+  | { type: "judge"; crm: string; verdict: "prior_contact" | "clean" | "ambiguous"; owner?: string; lastTouch?: string; status?: string }
+  | { type: "model.start"; crm: string; model: string; prompt: string }
+  | { type: "model.end"; crm: string; model: string; ms: number; raw?: string; summary?: string; accepted: boolean; reason?: string; usage?: ModelUsage }
+  | { type: "model.skip"; crm: string; reason: string }
+  | { type: "source.done"; crm: string; verdict: "prior_contact" | "clean" | "ambiguous"; ms: number; summary: string };
+
+/** What a local model server reports about one call. */
+export interface ModelUsage {
+  promptTokens?: number;
+  genTokens?: number;
+  loadMs?: number;
+  promptMs?: number;
+  genMs?: number;
+  mode?: "prefill" | "format" | "tool";
+}
+
+export type TraceFn = (e: TraceEvent) => void;
+
 export interface Evidence {
   target: Target;
   /** Ranked: exact-domain matches first, then anything with a signal. */
@@ -88,32 +112,42 @@ export function rankMatches(matches: CRMMatch[], target: Target): CRMMatch[] {
 export async function gather(
   crm: CRMConnector,
   raw: string,
-  opts: { contextTop?: number } = {},
+  opts: { contextTop?: number; trace?: TraceFn } = {},
 ): Promise<Evidence> {
   const target = parseTarget(raw);
   const contextTop = opts.contextTop ?? 2;
+  const trace = opts.trace ?? (() => {});
+
+  const search = async (object: "companies" | "people"): Promise<CRMMatch[]> => {
+    const t0 = Date.now();
+    const q = target.kind === "domain" ? { object, domain: target.value } : { object, name: target.value };
+    const out = await crm.search(q);
+    trace({ type: "search", crm: crm.name, object, by: target.kind, term: target.value, ms: Date.now() - t0, matches: out.length });
+    return out;
+  };
 
   let found: CRMMatch[];
   if (target.kind === "domain") {
-    found = await crm.search({ object: "companies", domain: target.value });
+    found = await search("companies");
     // No company record → maybe a contact with that email domain (Salesforce
     // Contact.Email, Affinity persons). Connectors that can't filter people by
     // domain return [] without throwing.
-    if (found.length === 0) found = await crm.search({ object: "people", domain: target.value });
+    if (found.length === 0) found = await search("people");
   } else {
-    const [companies, people] = await Promise.all([
-      crm.search({ object: "companies", name: target.value }),
-      crm.search({ object: "people", name: target.value }),
-    ]);
+    const [companies, people] = await Promise.all([search("companies"), search("people")]);
     found = [...companies, ...people];
   }
 
   const matches = rankMatches(dedupe(found), target);
+  trace({ type: "rank", crm: crm.name, top: matches[0]?.name ?? matches[0]?.recordId, matches: matches.length });
   const contexts = new Map<string, CRMContext>();
   await Promise.all(
     matches.slice(0, contextTop).map(async (m) => {
+      const t0 = Date.now();
       try {
-        contexts.set(m.recordId, await crm.getContext(m.object, m.recordId));
+        const ctx = await crm.getContext(m.object, m.recordId);
+        contexts.set(m.recordId, ctx);
+        trace({ type: "context", crm: crm.name, recordId: m.recordId, name: m.name, ms: Date.now() - t0, notes: ctx.notes.length, lists: ctx.lists.length, people: ctx.people.length });
       } catch {
         /* context is a bonus — the search signals alone still decide */
       }

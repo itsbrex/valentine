@@ -89,6 +89,26 @@ and click-to-act links (open the CRM record · website · LinkedIn):
   stage · connection · known contacts), the latest note, and link buttons.
   Clean sources fold into one quiet line so the message stays short.
 
+## Valentine Lab — watch it run
+
+`npm run lab` serves a local dashboard at `https://valentine-lab.localhost`
+(portless; nothing leaves the machine). It runs the real code paths and streams
+every step over SSE, so you see the sweep as it happens: the CRM searches and
+context pulls per source, the rule-based verdict, the one model call with token
+counts and tok/s, then the Slack Block Kit message exactly as the watch daemon
+would post it. Four scenarios:
+
+- **Sweep** — any target; pick the model and which CRMs; optionally skip the model.
+- **Meeting** — pick an upcoming calendar event (or type attendee domains), build
+  the heads-up, send it to your Slack DM with one click.
+- **Brief vs agent** — the deterministic path and the tool-calling loop on the
+  same target, every agent turn timed.
+- **Model bench** — the four fixture cases through every installed model, with a
+  median bar chart and the grounding check applied per line.
+
+The "Which model, when" panel explains the trade-offs. Timings shown are
+measured on your machine, not simulated.
+
 ## Your keys, your data
 
 Runs with your CRM token, on your machine. Nothing leaves the fund. Keys are
