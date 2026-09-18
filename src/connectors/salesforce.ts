@@ -3,6 +3,7 @@
 //   - Account / Contact search via SOQL (Name, Website, Owner, LastActivityDate)
 //   - Note bodies + Task subjects for outcomes ("passed, too early")
 //   - Opportunities (Account) and Campaigns (Contact) as list/pipeline signals
+//   - ActivityHistory (the Task/Event behind "last touched") for deep links
 // Anything custom or missing is skipped gracefully — never assumed.
 //
 // Auth: a REST access token + instance URL. Get one from a read-only user via a
@@ -13,11 +14,18 @@
 // extractor like salesforce-mcp-auto-auth-chrome (see backlog.md). The command
 // runs lazily on first use and once more on a 401/INVALID_SESSION_ID, so the
 // session self-refreshes as long as a browser tab stays logged in.
+//
+// An auth failure that survives the retry is THROWN, not swallowed: a sweep
+// must report "couldn't reach Salesforce" (ambiguous), never "clean". Restricted
+// objects/fields still degrade to no-match — that is a data-model gap, not an
+// outage.
 // API ref: https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/
+// Lightning URLs: /lightning/r/{Object}/{Id}/view · …/related/{RelatedList}/view ·
+//   /lightning/o/{Object}/new?defaultFieldValues=Field=Value,… (values URL-encoded)
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { CRMConnector, CRMMatch, CRMContext, SearchQuery } from "./types.js";
+import type { CRMConnector, CRMMatch, CRMContext, SearchQuery, Activity, ListMembership, RecordLink, WebUrls, CreatePrefill } from "./types.js";
 
 const run = promisify(exec);
 const API = "/services/data/v59.0";
@@ -29,8 +37,14 @@ export interface SalesforceAuth {
   command?: string;
 }
 
+/** Thrown when the token is rejected even after a refresh — the caller surfaces it. */
+export class SalesforceAuthError extends Error {
+  readonly code = "SALESFORCE_AUTH";
+}
+
 export class SalesforceConnector implements CRMConnector {
   readonly name = "Salesforce";
+  readonly webUrls: WebUrls;
   private token?: string;
   private readonly command?: string;
   private instanceUrl: string;
@@ -40,6 +54,9 @@ export class SalesforceConnector implements CRMConnector {
     this.token = auth.token;
     this.command = auth.command;
     this.instanceUrl = instanceUrl.replace(/\/+$/, "");
+    this.webUrls = {
+      create: (kind, p) => this.createUrl(kind, p),
+    };
   }
 
   private async accessToken(): Promise<string> {
@@ -49,7 +66,7 @@ export class SalesforceConnector implements CRMConnector {
     const { stdout } = await run(this.command, { timeout: 30_000 });
     this.token = stdout.trim().split("\n").pop() || undefined;
     if (!this.token)
-      throw new Error("Salesforce sid command printed nothing — is the browser logged in?");
+      throw new SalesforceAuthError("Salesforce sid command printed nothing — is the browser logged in?");
     return this.token;
   }
 
@@ -64,6 +81,13 @@ export class SalesforceConnector implements CRMConnector {
       res = await fetch(url, {
         headers: { Authorization: `Bearer ${await this.accessToken()}` },
       });
+    }
+    if (res.status === 401) {
+      const body = await res.text();
+      throw new SalesforceAuthError(
+        `Salesforce session expired or invalid (${body.slice(0, 120)}) — log in again in the browser` +
+          (this.command ? " that the sid command reads" : "") + ".",
+      );
     }
     if (!res.ok) {
       const body = await res.text();
@@ -80,7 +104,8 @@ export class SalesforceConnector implements CRMConnector {
     try {
       const recs = await this.soql("SELECT Name FROM Organization LIMIT 1");
       return { workspace: recs[0]?.Name ?? new URL(this.instanceUrl).hostname };
-    } catch {
+    } catch (e) {
+      if (e instanceof SalesforceAuthError) throw e;
       return { workspace: new URL(this.instanceUrl).hostname };
     }
   }
@@ -93,7 +118,7 @@ export class SalesforceConnector implements CRMConnector {
       if (q.object === "companies") {
         const where = q.domain ? `Website LIKE '%${term}%'` : `Name LIKE '%${term}%'`;
         const recs = await this.soql(
-          `SELECT Id, Name, Website, Owner.Name, LastActivityDate, ` +
+          `SELECT Id, Name, Website, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate, ` +
             `(SELECT Id FROM Contacts LIMIT 6) FROM Account WHERE ${where} LIMIT 10`,
         );
         return recs.map((r) => ({
@@ -101,17 +126,21 @@ export class SalesforceConnector implements CRMConnector {
           object: "companies" as const,
           name: r.Name ?? undefined,
           domain: hostname(r.Website),
-          owner: r.Owner?.Name ?? undefined,
+          ...this.ownerOf(r),
           lastInteraction: r.LastActivityDate ? `activity · ${r.LastActivityDate}` : undefined,
           linkedPeople: r.Contacts?.records?.length ?? undefined,
           url: this.recordUrl("Account", r.Id),
+          views: {
+            activity: this.relatedUrl("Account", r.Id, "ActivityHistories"),
+            people: this.relatedUrl("Account", r.Id, "Contacts"),
+          },
         }));
       }
 
       // "people" → Contact. By name, or by email domain when a domain is given.
       const where = q.domain ? `Email LIKE '%@${term}'` : `Name LIKE '%${term}%'`;
       const recs = await this.soql(
-        `SELECT Id, Name, Email, Owner.Name, LastActivityDate, Account.Name ` +
+        `SELECT Id, Name, Email, AccountId, Account.Name, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate ` +
           `FROM Contact WHERE ${where} LIMIT 10`,
       );
       return recs.map((r) => ({
@@ -119,28 +148,94 @@ export class SalesforceConnector implements CRMConnector {
         object: "people" as const,
         name: r.Name ?? undefined,
         domain: r.Email?.split("@")[1],
-        owner: r.Owner?.Name ?? undefined,
+        ...this.ownerOf(r),
         lastInteraction: r.LastActivityDate ? `activity · ${r.LastActivityDate}` : undefined,
         url: this.recordUrl("Contact", r.Id),
+        ...(r.AccountId
+          ? { parent: { id: r.AccountId, label: r.Account?.Name ?? "Account", url: this.recordUrl("Account", r.AccountId)! } }
+          : {}),
+        views: { activity: this.relatedUrl("Contact", r.Id, "ActivityHistories") },
       }));
-    } catch {
+    } catch (e) {
+      if (e instanceof SalesforceAuthError) throw e;
       return []; // restricted object/field for this user → no match, never crash
     }
   }
 
+  private ownerOf(r: any): Pick<CRMMatch, "owner" | "ownerId" | "ownerUrl" | "ownerActive"> {
+    const name: string | undefined = r.Owner?.Name ?? undefined;
+    if (!name) return {};
+    // Orgs park unowned records on a placeholder user ("Unassigned Atlanta",
+    // "Integration User"…) — surface that as an owner gap, not an owner.
+    const placeholder = /\bunassigned\b|\bintegration user\b|\bapi user\b/i.test(name);
+    const active = r.Owner?.IsActive === false || placeholder ? false : r.Owner?.IsActive === true ? true : undefined;
+    return {
+      owner: name,
+      ...(r.OwnerId ? { ownerId: r.OwnerId, ownerUrl: this.recordUrl("User", r.OwnerId) } : {}),
+      ...(active === undefined ? {} : { ownerActive: active }),
+    };
+  }
+
   /** Lightning deep link; my.salesforce.com hosts serve Lightning directly. */
-  private recordUrl(sobject: "Account" | "Contact", id?: string): string | undefined {
+  private recordUrl(sobject: string, id?: string): string | undefined {
     return id ? `${this.instanceUrl}/lightning/r/${sobject}/${id}/view` : undefined;
+  }
+
+  private relatedUrl(sobject: string, id: string, related: string): string {
+    return `${this.instanceUrl}/lightning/r/${sobject}/${id}/related/${related}/view`;
+  }
+
+  /** Prefilled new-record form. `defaultFieldValues=F1=v1,F2=v2`; each value
+   *  URL-encoded so commas and spaces inside it survive. Nothing is saved until
+   *  the user presses Save in their browser. */
+  private createUrl(kind: "company" | "lead" | "call" | "task" | "meeting", p: CreatePrefill & { recordId?: string; subject?: string }): string | undefined {
+    const fields: Record<string, string | undefined> = {};
+    let object: string;
+    if (kind === "company") {
+      object = "Account";
+      fields.Name = p.name ?? p.domain;
+      fields.Website = p.domain ? `https://${p.domain}` : undefined;
+      fields.Description = p.note;
+    } else if (kind === "lead") {
+      object = "Lead";
+      fields.Company = p.name ?? p.domain;
+      fields.Website = p.domain ? `https://${p.domain}` : undefined;
+      const [first, ...rest] = (p.person ?? "").split(" ").filter(Boolean);
+      if (rest.length) {
+        fields.FirstName = first;
+        fields.LastName = rest.join(" ");
+      } else if (first) fields.LastName = first;
+      fields.Description = p.note;
+    } else {
+      if (!p.recordId) return undefined;
+      object = kind === "meeting" ? "Event" : "Task";
+      // Contact/Lead ids go on WhoId; anything else (Account, Opportunity) on WhatId.
+      const who = /^(003|00Q)/.test(p.recordId);
+      fields[who ? "WhoId" : "WhatId"] = p.recordId;
+      fields.Subject = p.subject ?? (kind === "call" ? `Call ${p.name ?? p.domain ?? ""}`.trim() : kind === "meeting" ? `Meeting ${p.name ?? p.domain ?? ""}`.trim() : `Follow up ${p.name ?? p.domain ?? ""}`.trim());
+    }
+    const pairs = Object.entries(fields)
+      .filter((kv): kv is [string, string] => !!kv[1])
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`);
+    if (!pairs.length) return undefined;
+    return `${this.instanceUrl}/lightning/o/${object}/new?defaultFieldValues=${pairs.join(",")}`;
   }
 
   async getContext(object: "companies" | "people", id: string): Promise<CRMContext> {
     const sid = soqlEscape(id);
-    const [notes, lists, people] = await Promise.all([
+    const [notes, lists, people, activities] = await Promise.all([
       this.notes(object, sid),
       this.lists(object, sid),
       this.people(object, sid),
+      this.activities(object, sid),
     ]);
-    return { notes, lists, people };
+    return {
+      notes,
+      lists,
+      people: people.map((p) => p.label),
+      ...(people.length ? { peopleLinks: people } : {}),
+      ...(activities.length ? { activities } : {}),
+    };
   }
 
   // --- standard sub-fetches, each degrades to empty on error ---
@@ -168,31 +263,64 @@ export class SalesforceConnector implements CRMConnector {
     return out.slice(0, 25);
   }
 
-  private async lists(
-    object: "companies" | "people",
-    id: string,
-  ): Promise<{ list: string; stage?: string }[]> {
+  private async lists(object: "companies" | "people", id: string): Promise<ListMembership[]> {
     try {
       if (object === "companies") {
         const opps = await this.soql(
-          `SELECT Name, StageName FROM Opportunity WHERE AccountId = '${id}' ORDER BY CreatedDate DESC LIMIT 10`,
+          `SELECT Id, Name, StageName, IsClosed FROM Opportunity WHERE AccountId = '${id}' ORDER BY CreatedDate DESC LIMIT 10`,
         );
-        return opps.map((o) => ({ list: `Opportunity: ${o.Name}`, stage: o.StageName ?? undefined }));
+        return opps.map((o) => ({
+          list: `Opportunity: ${o.Name}`,
+          stage: o.StageName ?? undefined,
+          kind: "opportunity" as const,
+          id: o.Id,
+          url: this.recordUrl("Opportunity", o.Id),
+          open: o.IsClosed == null ? undefined : !o.IsClosed,
+        }));
       }
       const camps = await this.soql(
-        `SELECT Campaign.Name, Status FROM CampaignMember WHERE ContactId = '${id}' LIMIT 10`,
+        `SELECT Id, CampaignId, Campaign.Name, Status FROM CampaignMember WHERE ContactId = '${id}' LIMIT 10`,
       );
-      return camps.map((c) => ({ list: c.Campaign?.Name ?? "campaign", stage: c.Status ?? undefined }));
+      return camps.map((c) => ({
+        list: c.Campaign?.Name ?? "campaign",
+        stage: c.Status ?? undefined,
+        kind: "campaign" as const,
+        id: c.CampaignId ?? undefined,
+        url: this.recordUrl("Campaign", c.CampaignId),
+        memberUrl: this.recordUrl("CampaignMember", c.Id),
+      }));
     } catch {
       return [];
     }
   }
 
-  private async people(object: "companies" | "people", id: string): Promise<string[]> {
+  private async people(object: "companies" | "people", id: string): Promise<RecordLink[]> {
     if (object !== "companies") return [];
     try {
-      const recs = await this.soql(`SELECT Name FROM Contact WHERE AccountId = '${id}' LIMIT 5`);
-      return recs.map((r) => r.Name).filter(Boolean);
+      const recs = await this.soql(`SELECT Id, Name FROM Contact WHERE AccountId = '${id}' LIMIT 5`);
+      return recs.filter((r) => r.Name).map((r) => ({ label: r.Name, url: this.recordUrl("Contact", r.Id)! }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** The Task/Event behind "last touched", via the ActivityHistories subquery
+   *  (ActivityHistory cannot be queried directly). Newest first. */
+  private async activities(object: "companies" | "people", id: string): Promise<Activity[]> {
+    const sobject = object === "companies" ? "Account" : "Contact";
+    try {
+      const recs = await this.soql(
+        `SELECT Id, (SELECT Id, Subject, ActivityDate, ActivityType, IsTask FROM ActivityHistories ` +
+          `ORDER BY ActivityDate DESC NULLS LAST LIMIT 5) FROM ${sobject} WHERE Id = '${id}'`,
+      );
+      const rows: any[] = recs[0]?.ActivityHistories?.records ?? [];
+      return rows.map((a) => ({
+        id: a.Id,
+        date: a.ActivityDate ?? undefined,
+        kind: (a.ActivityType ?? (a.IsTask ? "task" : "event")).toLowerCase(),
+        subject: a.Subject ?? undefined,
+        url: this.recordUrl(a.IsTask === false ? "Event" : "Task", a.Id),
+      }));
     } catch {
       return [];
     }
