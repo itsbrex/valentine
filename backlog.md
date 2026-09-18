@@ -93,6 +93,43 @@ Caveats to resolve later:
   `~/.valentine/model-traits.json`. Bench: ~1 s, 4/4 grounded, prose drier
   than the 2.6B. Listed in `init`; 2.6B stays default for the 1.7 GB footprint.
 
+## Slack card v2 — SHIPPED 2026-09-18 (read-only half of the design)
+
+The desired-state design (`valentine-slack-preview`: five states, link spec,
+state matrix) is implemented for everything that can be a **link**:
+
+- Every entity in the card links to its record: domain → Account/company,
+  name → Contact/company, owner → SF User, "last touched" → the Task/Event
+  (via the `ActivityHistories` subquery) or the Attio activity/emails tab,
+  list/campaign → Campaign or Attio `/collection/{list_id}`, people → Contact /
+  Attio person, opportunity → Opportunity. The connectors now return ids +
+  URLs for all of these (`CRMMatch.parent/ownerUrl/views`,
+  `CRMContext.peopleLinks/activities`, `ListMembership.url/kind/open`).
+- State pills computed from facts: `9y 3m stale`, stage on an open
+  Opportunity (🔥 Active deal), `owner unset` / `SF owner unassigned`
+  (placeholder owners like "Unassigned Atlanta" count as a gap),
+  `names differ across CRMs`, `<CRM> unreachable`.
+- *Valentine says*: `next_step` added to the one structured model call, same
+  grounding gate as the summary, template fallback per situation.
+- Per-CRM action rows with prefilled Lightning forms (`/lightning/o/{Object}/new?defaultFieldValues=…`):
+  Log call · New task · Log meeting on a hit; `＋ Lead` · `＋ Account` seeded
+  from the other CRM's record when Salesforce has nothing. Attio has no
+  prefilled-create URL and no `/search` route (verified: redirects home), so a
+  clean Attio row offers the companies table.
+- Salesforce auth failures are thrown and surfaced as `unreachable`
+  (ambiguous) instead of being swallowed into a false `clean` — found while
+  building this: an expired browser session made cyth.com read as clean.
+
+**Parked — the interactive half.** The design's write-through buttons
+(*Create company + person in Attio*, *Claim owner*, *Link IDs*, *Fix Attio
+match*, *Log to both CRMs*, *Snooze*, overflow menus) need (a) a Slack
+interactivity endpoint on `valentine slack` and (b) CRM **write** scopes.
+(b) contradicts the read-only contract (SPEC §"Read-only, structurally";
+`CRMConnector` has no mutating method by design). If this is ever wanted it
+should be a separate, opt-in package with its own token, not a flag on
+Valentine. Calendar deep links (Open event / Join) need the event UID and
+conferencing URL from the calendar source (`Meeting` has neither yet).
+
 ## Other
 - ~~Multi-CRM merge (showcase idea 9)~~ — shipped 2026-08 as multi-CRM sweeps:
   `crms: [primary, …]` in config / `VALENTINE_CRMS` env / `init --crms`. One

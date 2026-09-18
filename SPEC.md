@@ -140,12 +140,20 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
   summary, owner + last touch + status, the facts (connection, first contact,
   known contacts, note), and click-through links (OSC 8 hyperlinks: open in
   CRM · website · LinkedIn).
-- **`--json`:** `{ verdict: "prior_contact|clean|ambiguous", summary, owner,
-  lastTouch, status, citations: [recordIds], facts: { …, links: [{label,url}] },
-  elapsedMs }` — see AGENTS.md for the full shape.
-- **Slack (watch DM + `/valentine`):** Block Kit — header, per-target verdict
-  line, summary, a field grid (owner / last touch / stage / connection / known
-  contacts), the latest note, link buttons. Plain `text` fallback always set.
+- **`--json`:** `{ verdict: "prior_contact|clean|ambiguous", summary, nextStep,
+  owner, lastTouch, status, citations: [recordIds], facts: { …, links, actions },
+  elapsedMs }` — see AGENTS.md for the full shape. `facts` carries a deep link
+  for every entity (record, parent account, owner, last-touch activity, lists,
+  people, record tabs) so surfaces can link the prose, not just add buttons.
+- **Slack (watch DM + `/valentine`):** Block Kit, one card per target across
+  every CRM swept — a headline with every entity linked and state pills (stale ·
+  stage · owner gap · names differ · unreachable), the summary with its names
+  and dates linked, a field grid paired across CRMs when both know the company,
+  *Valentine says* (one grounded next step), one action row per CRM (open the
+  record / tabs, prefilled Log call · New task · + Lead · + Account forms, or
+  "nothing in X"), website + LinkedIn, and a footer linking what was swept.
+  Every button is a URL: nothing is written until a human saves the form in the
+  CRM. Plain `text` fallback always set.
 - **Exit codes:** `0` clean · `10` prior contact · `20` ambiguous · `1` error.
   (Lets `watch`/Slack/scripts branch on the result.)
 

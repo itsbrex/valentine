@@ -84,10 +84,16 @@ and click-to-act links (open the CRM record · website · LinkedIn):
 - **`--json` / MCP** — `facts` (people, lists, notes, connection, dates) and
   `facts.links` next to the verdict, so agents can act without parsing prose.
 - **Slack** — Block Kit for both the `/valentine` slash command and the
-  `valentine watch --notify slack` heads-up: a header per meeting, a verdict
-  line per attendee company, the summary, a field grid (owner · last touch ·
-  stage · connection · known contacts), the latest note, and link buttons.
-  Clean sources fold into one quiet line so the message stays short.
+  `valentine watch --notify slack` heads-up: one card per attendee company
+  across every CRM swept. The headline links the domain, the record and the
+  contact and carries state pills (`9y 3m stale`, `Negotiation`, `owner unset`,
+  `names differ across CRMs`, `Salesforce unreachable`); every name and date in
+  the summary links to its record, activity or list; the field grid pairs
+  Salesforce and Attio values side by side; *Valentine says* gives one grounded
+  next step; one action row per CRM opens the record, its activity/emails, or a
+  prefilled Log call · New task · + Lead · + Account form — and says
+  `nothing in Attio` when a CRM has never seen them. Still read-only: every
+  button is a link, and a form is only saved when you press Save in the CRM.
 
 ## Valentine Lab — watch it run
 

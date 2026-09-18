@@ -72,30 +72,53 @@ is set — it errors out with instructions instead.
   "target": "acme.com",
   "verdict": "prior_contact",     // "clean" | "prior_contact" | "ambiguous"
   "summary": "Sarah emailed Acme's founder 3 weeks ago — logged 'passed, too early'.",
+  "nextStep": "Check with Sarah Lee before reaching out, then log the touch.",  // one grounded next step
   "owner": "Sarah Lee",            // optional
   "lastTouch": "2026-05-12",       // optional
   "status": "passed, too early",   // optional
   "citations": ["rec_abc", "rec_def"],
   "facts": {                       // structured evidence — every field read from the CRM
-    "matchName": "Acme", "domain": "acme.com", "matches": 1,
+    "matchName": "Acme", "matchUrl": "https://app.attio.com/<ws>/company/rec_abc",
+    "matchObject": "companies",    // or "people" (a Contact), then `parent` is its Account
+    "domain": "acme.com", "matches": 1,
+    "ownerUrl": "https://…/lightning/r/User/005…/view",   // Salesforce only
+    "ownerActive": true,           // false = deactivated or a placeholder like "Unassigned …"
     "connectionStrength": "Very strong", "firstInteraction": "2025-01-02",
     "lastEmail": "2026-05-12", "lastMeeting": "2026-04-01",
-    "people": ["Jane Founder"], "lists": [{ "list": "Passed" }],
+    "lastTouchUrl": "https://…/emails",   // the Task/Event, or the record's activity/emails tab
+    "stale": "4mo",                // age of the last touch at sweep time: "9y 3m" · "5mo" · "78d" · "2d"
+    "views": { "activity": "…/activity", "emails": "…/emails", "people": "…/team" },
+    "people": ["Jane Founder"],
+    "peopleLinks": [{ "label": "Jane Founder", "url": "https://app.attio.com/<ws>/person/p_1" }],
+    "lists": [{ "list": "Passed", "kind": "list", "url": "https://app.attio.com/<ws>/collection/l_1" }],
+    "opportunity": { "list": "Opportunity: Acme Seed", "stage": "Negotiation", "open": true, "url": "…" },  // Salesforce
+    "activities": [{ "id": "00T…", "date": "2026-05-12", "kind": "email", "subject": "…", "url": "…" }], // Salesforce
     "notes": ["passed, too early"],
     "links": [                     // click-to-act
       { "label": "Open in Attio", "url": "https://app.attio.com/<ws>/company/rec_abc" },
       { "label": "Website", "url": "https://acme.com" },
       { "label": "LinkedIn", "url": "https://www.linkedin.com/search/results/companies/?keywords=Acme" }
-    ]
+    ],
+    "actions": [                   // read-only "act" links: prefilled new-record FORMS in the CRM
+      { "label": "Log call", "url": "https://…/lightning/o/Task/new?defaultFieldValues=WhoId=003…,Subject=Call%20Jane" }
+    ],
+    "searchUrl": "https://app.attio.com/<ws>/companies"
   },
   "elapsedMs": 3200
 }
 ```
 
 `verdict`, `owner`, `lastTouch`, `status`, `citations` and `facts` are computed
-from CRM reads, not by the model — the model only writes `summary`, and only when
-its line is grounded in `facts` (otherwise a template line is used). Agents that
-want to act on the result should read `facts.links`, not parse `summary`.
+from CRM reads, not by the model — the model only writes `summary` and
+`nextStep`, and only when the line is grounded in `facts` (otherwise a template
+line is used). Agents that want to act on the result should read `facts.links`
+and `facts.actions`, not parse `summary`. Every optional field is omitted when
+the CRM has nothing for it. `facts.actions` are prefilled new-record forms
+(Salesforce Lightning `defaultFieldValues`) — following one opens a form;
+nothing is saved until a human presses Save. In a multi-CRM sweep, a source
+that came back `clean` gets `＋ Lead` / `＋ Account` forms seeded from the CRM
+that did know the company, and a source that could not be read is
+`ambiguous` with `"unreachable": true` (never `clean`).
 
 Exit codes (use these to branch without parsing): `0` clean · `10` prior
 contact · `20` ambiguous · `1` error.
