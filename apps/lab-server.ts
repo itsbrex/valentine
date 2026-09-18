@@ -61,6 +61,9 @@ interface Run {
   listeners: Set<ServerResponse>;
 }
 const runs = new Map<string, Run>();
+/** Where this lab is reachable — the Slack footer's "run <id>" link points at `${labUrl}/?run=<id>`. */
+let labUrl: string | undefined;
+const runLink = (run: Run) => ({ runId: run.id.slice(0, 8), runUrl: labUrl ? `${labUrl}/?run=${run.id}` : undefined });
 
 function emit(run: Run, type: string, data: Record<string, unknown> = {}): void {
   // `type` last: trace payloads carry their own `type` (search, judge…) and
@@ -146,7 +149,7 @@ async function runSweep(run: Run, body: SweepBody, tag = "sweep"): Promise<Sweep
   try {
     const res = await sweepAll(client, cfg, body.target, { noModel: body.noModel, timeoutMs: body.timeoutMs, trace });
     const crmNames = activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + ");
-    const slack = slashMessage(body.target, res, { crms: crmNames, elapsedMs: res.elapsedMs });
+    const slack = slashMessage(body.target, res, { crms: crmNames, elapsedMs: res.elapsedMs, model: cfg.model, ...runLink(run) });
     emit(run, "sweep.result", {
       tag,
       target: body.target,
@@ -250,7 +253,7 @@ async function runMeeting(run: Run, body: { withinMinutes?: number; title?: stri
     }),
   );
   const cfg = loadConfig();
-  const msg = meetingMessage(title, minutes, items, { crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "), model: body.model ?? cfg.model, elapsedMs: Date.now() - t0 });
+  const msg = meetingMessage(title, minutes, items, { crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "), model: body.model ?? cfg.model, elapsedMs: Date.now() - t0, ...runLink(run) });
   emit(run, "meeting.result", { title, minutes, text: msg.text, blocks: msg.blocks, elapsedMs: Date.now() - t0 });
   emit(run, "done", {});
 }
@@ -383,5 +386,6 @@ const host = process.env.HOST || "127.0.0.1";
 server.listen(port, host, () => {
   const addr = server.address();
   const where = process.env.PORTLESS_URL ?? (typeof addr === "object" && addr ? `http://${host}:${addr.port}` : "?");
+  if (where !== "?") labUrl = where.replace(/\/+$/, "");
   console.log(`✦ valentine lab ${VERSION} · ${where} · read-only`);
 });

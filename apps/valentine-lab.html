@@ -1259,6 +1259,22 @@ async function startRun(body, onEvent, onDone) {
   };
   es.onerror = () => { log(null, 'err', 'stream', 'connection lost'); es.close(); LAB.es = null; stopClock(); progress(100, 'stream lost', false); };
 }
+/* `?run=<id>` (the Slack footer's "run" link) replays a run the server still holds in memory. */
+function replayRun(id) {
+  bail();
+  resetViews('sweep');
+  LAB.run = { id, kind: 'replay', body: {}, startedAt: Date.now() };
+  $('footStat').textContent = 'run ' + id + ' · replay';
+  const es = new EventSource(API + '/api/runs/' + id + '/events');
+  LAB.es = es;
+  const onEvent = sweepHandler({ single: true });
+  es.onmessage = ev => {
+    const e = JSON.parse(ev.data);
+    onEvent(e);
+    if (e.type === 'done' || e.type === 'fatal') { es.close(); LAB.es = null; stopClock(); }
+  };
+  es.onerror = () => { es.close(); LAB.es = null; stopClock(); toast('Run ' + id.slice(0, 8) + ' is no longer held by the lab server', 'error'); };
+}
 function remember(entry) {
   LAB.hist.unshift(entry);
   LAB.hist = LAB.hist.slice(0, 12);
@@ -1523,6 +1539,8 @@ function appKeydown(e) {
   $('logClear').onclick = () => { $('log').innerHTML = ''; };
   $('target').addEventListener('keydown', e => { if (e.key === 'Enter') runSweep(); });
   $('cTarget').addEventListener('keydown', e => { if (e.key === 'Enter') runCompare(); });
+  const replay = new URLSearchParams(location.search).get('run');
+  if (replay && /^[\w-]+$/.test(replay)) setTimeout(() => replayRun(replay), 0);
   document.querySelectorAll('.tabs .tab').forEach(t => t.onclick = () => setScenario(t.dataset.sc));
   document.querySelectorAll('.rtabs .chip').forEach(c => c.onclick = () => showPane(c.dataset.rp));
   document.addEventListener('click', e => {
