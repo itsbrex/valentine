@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseTarget, rankMatches, hasSignal, gather } from "../src/gather.js";
-import { judge, templateSummary, brief, parseJsonLoose, acceptSummary, structured } from "../src/brief.js";
+import { judge, templateSummary, templateNextStep, brief, parseJsonLoose, acceptSummary, structured, staleness, cleanName } from "../src/brief.js";
 import type { CRMConnector, CRMMatch, CRMContext } from "../src/connectors/types.js";
 import type { ModelClient } from "../src/models.js";
 
@@ -198,4 +198,103 @@ test("acceptSummary grounds claims in the facts: no invented owner, no invented 
   assert.equal(acceptSummary("Last email 2024-02-13, last meeting 2023-01-05.", j), undefined);
   // Facts only → accepted.
   assert.equal(acceptSummary("Last email 2024-02-13; Ed Strazzulla is a known contact.", j), "Last email 2024-02-13; Ed Strazzulla is a known contact.");
+});
+
+// ─── the desired-card additions: staleness, name cleaning, next step, act links ───
+
+test("staleness: years+months, months, days, today; never negative", () => {
+  const now = new Date("2026-09-18T12:00:00Z");
+  assert.equal(staleness("2017-06-13", now), "9y 3m");
+  assert.equal(staleness("2024-02-13", now), "2y 7m");
+  assert.equal(staleness("2026-04-15", now), "5mo");
+  assert.equal(staleness("2026-07-02", now), "78d");
+  assert.equal(staleness("2026-09-16", now), "2d");
+  assert.equal(staleness("2026-09-18", now), "today");
+  assert.equal(staleness("2027-01-01", now), undefined);
+  assert.equal(staleness(undefined, now), undefined);
+});
+
+test("cleanName: shouty surnames and credential suffixes go, real suffixes stay", () => {
+  assert.equal(cleanName("Ed STRAZZULLA"), "Ed Strazzulla");
+  assert.equal(cleanName("Maria Jacobson, DCT"), "Maria Jacobson");
+  assert.equal(cleanName("Tobin Sloane, MCP, CCIM"), "Tobin Sloane");
+  assert.equal(cleanName("Martin Luther King, Jr."), "Martin Luther King, Jr.");
+  assert.equal(cleanName("JP Roach"), "JP Roach");
+});
+
+test("judge: facts carry the deep links the card needs — parent, owner, last touch, tabs, people, lists, act links", async () => {
+  const crmLike: CRMConnector = {
+    ...fakeCrm([]).crm,
+    name: "Salesforce",
+    search: async (q) =>
+      q.object === "companies" ? [] : [match({
+        recordId: "003C1", object: "people", name: "Ted Bruenich", domain: "fpbarch.com",
+        owner: "Glenn Friedrich", ownerId: "005G", ownerUrl: "https://sf/User/005G", ownerActive: true,
+        lastInteraction: "activity · 2017-06-13", url: "https://sf/Contact/003C1",
+        parent: { id: "001F", label: "FPBA", url: "https://sf/Account/001F" },
+        views: { activity: "https://sf/Contact/003C1/related/ActivityHistories/view" },
+      })],
+    getContext: async () => ({
+      notes: [], people: ["Maria Jacobson, DCT"], peopleLinks: [{ label: "Maria Jacobson, DCT", url: "https://sf/Contact/1" }],
+      lists: [{ list: "SD – Monthly Newsletter", stage: "Sent", kind: "campaign", url: "https://sf/Campaign/1", memberUrl: "https://sf/CampaignMember/1" }],
+      activities: [{ id: "00T1", date: "2017-06-13", kind: "email", url: "https://sf/Task/00T1" }],
+    }),
+    webUrls: { create: (kind, p) => `https://sf/new/${kind}/${p.recordId}` },
+  };
+  const j = judge(await gather(crmLike, "fpbarch.com"), crmLike);
+  assert.equal(j.verdict, "prior_contact");
+  assert.equal(j.facts.matchUrl, "https://sf/Contact/003C1");
+  assert.equal(j.facts.matchObject, "people");
+  assert.deepEqual(j.facts.parent, { label: "FPBA", url: "https://sf/Account/001F" });
+  assert.equal(j.facts.ownerUrl, "https://sf/User/005G");
+  assert.equal(j.facts.lastTouchUrl, "https://sf/Task/00T1", "the Task behind the last touch, not the tab");
+  assert.match(j.facts.stale!, /^\d+y \d+m$/);
+  assert.deepEqual(j.facts.people, ["Maria Jacobson"]);
+  assert.deepEqual(j.facts.peopleLinks, [{ label: "Maria Jacobson", url: "https://sf/Contact/1" }]);
+  assert.equal(j.facts.lists[0].memberUrl, "https://sf/CampaignMember/1");
+  assert.deepEqual(j.facts.actions, [{ label: "Log call", url: "https://sf/new/call/003C1" }, { label: "New task", url: "https://sf/new/task/003C1" }]);
+  assert.ok(!("opportunity" in j.facts));
+  // a plain string crm name still works (older callers)
+  assert.equal(judge(await gather(crmLike, "fpbarch.com"), "Salesforce").facts.actions, undefined);
+});
+
+test("judge: an open Opportunity becomes facts.opportunity; a closed one does not win over an open one", async () => {
+  const { crm } = fakeCrm([match({ owner: "Brian" })], {
+    notes: [], people: [],
+    lists: [
+      { list: "Opportunity: Old", stage: "Closed Lost", kind: "opportunity", open: false },
+      { list: "Opportunity: Cyth Expansion", stage: "Negotiation", kind: "opportunity", open: true },
+    ],
+  });
+  const j = judge(await gather(crm, "cyth.com"), "Salesforce");
+  assert.equal(j.facts.opportunity?.list, "Opportunity: Cyth Expansion");
+  assert.equal(templateNextStep(j, "Salesforce"), "Log this touch to Cyth Expansion so the stage history stays clean.");
+});
+
+test("templateNextStep: one imperative line per situation, facts only", async () => {
+  const clean = judge(await gather(fakeCrm([]).crm, "nobody.io"), "Attio");
+  assert.equal(templateNextStep(clean, "Attio"), "Clear to reach out — create the record in Attio so the next sweep sees it.");
+  const unowned = judge(await gather(fakeCrm([match({ lastEmail: "2024-02-13" })]).crm, "acme.com"), "Attio");
+  assert.equal(templateNextStep(unowned, "Attio"), "No owner on record in Attio — claim it, then log the touch.");
+  const placeholder = judge(await gather(fakeCrm([match({ owner: "Unassigned Atlanta", ownerActive: false, lastEmail: "2026-09-15" })]).crm, "hines.com"), "Salesforce");
+  assert.equal(templateNextStep(placeholder, "Salesforce"), "Unassigned Atlanta is a placeholder owner in Salesforce — claim the record before reaching out.");
+  const cold = judge(await gather(fakeCrm([match({ owner: "Glenn", lastInteraction: "activity · 2017-06-13" })]).crm, "fpbarch.com"), "Salesforce");
+  assert.match(templateNextStep(cold, "Salesforce"), /^Cold for \d+y \d+m — confirm Glenn still owns this before reaching out, then log the touch\.$/);
+  const warm = judge(await gather(fakeCrm([match({ owner: "JP", lastEmail: "2026-09-16" })]).crm, "acme.com"), "Attio");
+  assert.equal(templateNextStep(warm, "Attio"), "Check with JP before reaching out, then log the touch so the next sweep sees it.");
+});
+
+test("brief: the model's next_step rides the same grounding gate as the summary", async () => {
+  const { crm } = fakeCrm([match({ owner: "JP", lastEmail: "2026-09-16" })]);
+  const good: ModelClient = { ...noModel, structured: async () => ({ summary: "JP owns Acme, last email 2026-09-16.", next_step: "Ask JP for the thread before the call." }) };
+  const v = await brief(good, "m", crm, "acme.com");
+  assert.equal(v.nextStep, "Ask JP for the thread before the call.");
+  // An invented date in the next step → template next step, summary untouched.
+  const liar: ModelClient = { ...noModel, structured: async () => ({ summary: "JP owns Acme, last email 2026-09-16.", next_step: "Reference the 2025-01-01 meeting." }) };
+  const w = await brief(liar, "m", crm, "acme.com");
+  assert.equal(w.summary, "JP owns Acme, last email 2026-09-16.");
+  assert.equal(w.nextStep, "Check with JP before reaching out, then log the touch so the next sweep sees it.");
+  // Clean: template next step, no model call.
+  const c = await brief(good, "m", fakeCrm([]).crm, "nobody.io");
+  assert.equal(c.nextStep, "Clear to reach out — create the record in Fake so the next sweep sees it.");
 });

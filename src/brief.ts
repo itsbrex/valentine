@@ -1,11 +1,12 @@
 // THE FAST PATH, step two: judge and brief. The verdict is a rule over the
 // evidence (any real signal → prior_contact — the same rule the system prompt
 // gave the agent), so it never depends on a model getting it right. The model's
-// only job is the one-line summary, produced in a single structured call with
-// a timeout and a template fallback — so a slow or flaky local model can cost
-// you a nicer sentence, never the verdict, and never the meeting heads-up.
+// only job is the one-line summary and one suggested next step, produced in a
+// single structured call with a timeout and a template fallback — so a slow or
+// flaky local model can cost you a nicer sentence, never the verdict, and never
+// the meeting heads-up.
 
-import type { CRMConnector, CRMMatch, CRMContext, Verdict, BriefFacts, RecordLink } from "./connectors/types.js";
+import type { CRMConnector, CRMMatch, CRMContext, Verdict, BriefFacts, RecordLink, ListMembership } from "./connectors/types.js";
 import type { ModelClient } from "./models.js";
 import { gather, hasSignal, type Evidence, type TraceFn, type ModelUsage } from "./gather.js";
 
@@ -57,24 +58,105 @@ function linksFor(top: CRMMatch | undefined, crmName: string, target: Evidence["
   return links;
 }
 
-export function judge(ev: Evidence, crmName: string): Judged {
+/** Read-only "act" links: prefilled new-record forms on the matched record
+ *  (Log call · New task) — the CRM decides whether it has such forms. */
+function actionsFor(top: CRMMatch | undefined, crm: CRMConnector): RecordLink[] {
+  if (!top || !crm.webUrls?.create) return [];
+  const base = { recordId: top.recordId, name: top.name, domain: top.domain };
+  const out: RecordLink[] = [];
+  const call = crm.webUrls.create("call", base);
+  if (call) out.push({ label: "Log call", url: call });
+  const task = crm.webUrls.create("task", base);
+  if (task) out.push({ label: "New task", url: task });
+  return out;
+}
+
+/** "Ed STRAZZULLA" → "Ed Strazzulla"; "Maria Jacobson, DCT" → "Maria Jacobson".
+ *  CRMs carry shouty surnames and credential suffixes; the card shouldn't. */
+export function cleanName(raw: string): string {
+  let s = raw.replace(/\s+/g, " ").trim();
+  // Credential / suffix tokens after a comma: ", DCT", ", MCP, CCIM", ", Jr." stays.
+  s = s.replace(/,\s*(?!(jr|sr|ii|iii|iv)\b)[A-Z][A-Za-z.]{1,6}(,\s*[A-Z][A-Za-z.]{1,6})*\s*$/i, "");
+  return s
+    .split(" ")
+    .map((w) => (w.length > 2 && w === w.toUpperCase() && /^[A-Z'-]+$/.test(w) ? w[0] + w.slice(1).toLowerCase() : w))
+    .join(" ");
+}
+
+/** "2017-06-13" as of `now` → "9y 3m"; "5mo"; "78d"; "2d"; "today". */
+export function staleness(date: string | undefined, now = new Date()): string | undefined {
+  if (!date) return undefined;
+  const d = new Date(`${date.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  const days = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+  if (days < 0) return undefined;
+  if (days === 0) return "today";
+  if (days < 90) return `${days}d`;
+  const months = Math.floor(days / 30.44);
+  if (months < 12) return `${months}mo`;
+  const years = Math.floor(months / 12);
+  const rem = months % 12;
+  return rem ? `${years}y ${rem}m` : `${years}y`;
+}
+
+/** The pipeline object the verdict keys on: an open opportunity first, else
+ *  the most recent one. Only CRMs with pipeline objects set `kind`. */
+function opportunityOf(lists: ListMembership[]): ListMembership | undefined {
+  const opps = lists.filter((l) => l.kind === "opportunity");
+  return opps.find((o) => o.open !== false) ?? opps[0];
+}
+
+/** The deep link behind "last touched": the newest logged activity when the
+ *  CRM gives one, else the record's activity tab. */
+function lastTouchUrl(top: CRMMatch, ctx: CRMContext | undefined, lastTouch: string | undefined): string | undefined {
+  const date = lastTouch?.slice(0, 10);
+  const act = ctx?.activities?.find((a) => a.url && (!date || a.date === date)) ?? ctx?.activities?.find((a) => a.url);
+  if (act?.url) return act.url;
+  if (lastTouch?.includes("(email)") && top.views?.emails) return top.views.emails;
+  return top.views?.activity ?? top.url;
+}
+
+export function judge(ev: Evidence, crm: CRMConnector | string): Judged {
+  const crmName = typeof crm === "string" ? crm : crm.name;
+  const connector = typeof crm === "string" ? undefined : crm;
   const top = ev.matches[0];
   const ctx = top ? ev.contexts.get(top.recordId) : undefined;
   const flagged = ev.matches.filter((m) => hasSignal(m, ev.contexts.get(m.recordId)));
+  const lastTouch = top ? lastTouchOf(top) : undefined;
+  const lists = (ctx?.lists ?? []).slice(0, 5);
+  const people = (ctx?.peopleLinks ?? []).slice(0, 5).map((p) => ({ label: cleanName(p.label), url: p.url }));
+  const opportunity = opportunityOf(lists);
+  const actions = connector ? actionsFor(top, connector) : [];
+  const searchUrl = connector?.webUrls?.search?.(ev.target.value);
 
   const facts: BriefFacts = {
     matchName: top?.name,
+    matchUrl: top?.url,
+    matchObject: top?.object,
+    parent: top?.parent ? { label: top.parent.label, url: top.parent.url } : undefined,
     domain: top?.domain,
     matches: ev.matches.length,
+    ownerUrl: top?.ownerUrl,
+    ownerActive: top?.ownerActive,
     connectionStrength: top?.connectionStrength,
     firstInteraction: top?.firstInteraction,
     lastEmail: top?.lastEmail,
     lastMeeting: top?.lastMeeting,
-    people: (ctx?.people ?? []).slice(0, 5),
-    lists: (ctx?.lists ?? []).slice(0, 5),
+    lastTouchUrl: top ? lastTouchUrl(top, ctx, lastTouch) : undefined,
+    stale: staleness(lastTouch?.slice(0, 10)),
+    views: top?.views,
+    people: (ctx?.people ?? []).slice(0, 5).map(cleanName),
+    ...(people.length ? { peopleLinks: people } : {}),
+    lists,
+    ...(opportunity ? { opportunity } : {}),
+    ...(ctx?.activities?.length ? { activities: ctx.activities.slice(0, 5) } : {}),
     notes: (ctx?.notes ?? []).slice(0, 3).map((n) => n.replace(/\s+/g, " ").trim().slice(0, 240)),
     links: linksFor(top, crmName, ev.target),
+    ...(actions.length ? { actions } : {}),
+    ...(searchUrl ? { searchUrl } : {}),
   };
+  // Drop undefined keys so --json stays tidy and deepEqual tests stay readable.
+  for (const k of Object.keys(facts) as (keyof BriefFacts)[]) if (facts[k] === undefined) delete facts[k];
 
   let verdict: Verdict["verdict"];
   if (flagged.length > 0) verdict = "prior_contact";
@@ -84,7 +166,7 @@ export function judge(ev: Evidence, crmName: string): Judged {
   return {
     verdict,
     owner: top?.owner,
-    lastTouch: top ? lastTouchOf(top) : undefined,
+    lastTouch,
     status: statusOf(ctx),
     citations: flagged.length ? flagged.slice(0, 3).map((m) => m.recordId) : top ? [top.recordId] : [],
     facts,
@@ -106,20 +188,38 @@ export function templateSummary(j: Judged, target: string): string {
   return `${name}: ${bits.join(" · ") || "prior contact on record"}.`;
 }
 
+/** The no-model next step. One imperative sentence from the facts alone. */
+export function templateNextStep(j: Judged, crmName: string): string {
+  const f = j.facts;
+  if (j.verdict === "clean") return `Clear to reach out — create the record in ${crmName} so the next sweep sees it.`;
+  if (j.verdict === "ambiguous") return `Open the ${f.matches} matches in ${crmName} and confirm which one is them before the call.`;
+  if (f.opportunity && f.opportunity.open !== false)
+    return `Log this touch to ${f.opportunity.list.replace(/^Opportunity: /, "")} so the stage history stays clean.`;
+  if (j.owner && f.ownerActive === false) return `${j.owner} is a placeholder owner in ${crmName} — claim the record before reaching out.`;
+  if (!j.owner) return `No owner on record in ${crmName} — claim it, then log the touch.`;
+  const stale = f.stale ?? "";
+  if (/y/.test(stale)) return `Cold for ${stale} — confirm ${j.owner} still owns this before reaching out, then log the touch.`;
+  return `Check with ${j.owner} before reaching out, then log the touch so the next sweep sees it.`;
+}
+
 // --- the one model call ---
 
 export const BRIEF_SYSTEM = `You write one-line pre-meeting briefs from CRM facts.
-Reply with a JSON object: {"summary": string}.
+Reply with a JSON object: {"summary": string, "next_step": string}.
 - summary: ONE sentence, at most 22 words, plain text, no markdown, no domain name. Write prose; never copy the field labels below.
 - Lead with the most actionable fact: the outcome or deal stage if there is one, who owns the relationship, when it was last touched.
 - State facts only. Do not characterize them (no "active", "strong", "recent") unless the word is in the facts, and never say what is missing.
+- next_step: ONE imperative sentence, at most 20 words, the single thing to do before the call, using only the facts given.
 - Use only the facts given. Never invent people, dates, owners, or outcomes. "Their people" are contacts at the company, not the owner.
 - Keep dates exactly as written.`;
 
 export const BRIEF_SCHEMA = {
   type: "object",
-  properties: { summary: { type: "string", description: "One sentence, max 22 words" } },
-  required: ["summary"],
+  properties: {
+    summary: { type: "string", description: "One sentence, max 22 words" },
+    next_step: { type: "string", description: "One imperative sentence, max 20 words" },
+  },
+  required: ["summary", "next_step"],
 } as const;
 
 export function briefUserPrompt(j: Judged, target: string, crmName: string): string {
@@ -131,6 +231,7 @@ export function briefUserPrompt(j: Judged, target: string, crmName: string): str
   if (j.owner) lines.push(`Owner (our side): ${j.owner}`);
   if (j.status) lines.push(`Outcome / stage: ${j.status}`);
   if (j.lastTouch) lines.push(`Last touch: ${j.lastTouch}`);
+  if (f.stale) lines.push(`Time since last touch: ${f.stale}`);
   if (f.lastMeeting && j.lastTouch && !j.lastTouch.startsWith(f.lastMeeting)) lines.push(`Last meeting: ${f.lastMeeting}`);
   if (f.lastEmail && j.lastTouch && !j.lastTouch.startsWith(f.lastEmail)) lines.push(`Last email: ${f.lastEmail}`);
   if (f.firstInteraction) lines.push(`First interaction: ${f.firstInteraction}`);
@@ -183,7 +284,7 @@ export async function structured(
  *  every checkable claim in it is backed by the facts: an owner is only
  *  mentioned when we have one, every date in it appears in the evidence, and
  *  every capitalized name is one the CRM gave us. Small models are fluent
- *  liars; the template is not. */
+ *  liars; the template is not. The same gate guards the next step. */
 export function acceptSummary(s: unknown, j?: Judged): string | undefined {
   if (typeof s !== "string") return undefined;
   const t = s.replace(/\s+/g, " ").trim();
@@ -191,7 +292,7 @@ export function acceptSummary(s: unknown, j?: Judged): string | undefined {
   if (/^\{|\bnull\b|undefined/.test(t)) return undefined;
   if (!j) return t;
   if (!j.owner && /\b(own(s|ed|er|ership)?|handl(es|ed|ing))\b/i.test(t)) return undefined;
-  const known = [j.owner, j.lastTouch, j.status, j.facts.matchName, j.facts.firstInteraction, j.facts.lastEmail, j.facts.lastMeeting, ...j.facts.people, ...j.facts.lists.flatMap((l) => [l.list, l.stage]), ...j.facts.notes]
+  const known = [j.owner, j.lastTouch, j.status, j.facts.matchName, j.facts.firstInteraction, j.facts.lastEmail, j.facts.lastMeeting, j.facts.stale, ...j.facts.people, ...j.facts.lists.flatMap((l) => [l.list, l.stage]), ...j.facts.notes]
     .filter((x): x is string => !!x)
     .join(" ");
   for (const date of t.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []) if (!known.includes(date)) return undefined;
@@ -223,10 +324,12 @@ export async function brief(
   const t0 = Date.now();
   const trace = opts.trace ?? (() => {});
   const ev = await gather(crm, target, { trace });
-  const j = judge(ev, crm.name);
+  const j = judge(ev, crm);
   trace({ type: "judge", crm: crm.name, verdict: j.verdict, owner: j.owner, lastTouch: j.lastTouch, status: j.status });
   const fallback = templateSummary(j, target);
+  const fallbackStep = templateNextStep(j, crm.name);
   let summary = fallback;
+  let nextStep = fallbackStep;
 
   // Clean = nothing to say beyond "nothing found". Don't spend a model call.
   if (opts.noModel) trace({ type: "model.skip", crm: crm.name, reason: "noModel" });
@@ -247,7 +350,7 @@ export async function brief(
           system: BRIEF_SYSTEM,
           user,
           schema: BRIEF_SCHEMA as unknown as Record<string, unknown>,
-          max_tokens: 160,
+          max_tokens: 220,
         }),
         new Promise<undefined>((r) => {
           timer = setTimeout(() => r(undefined), timeoutMs);
@@ -255,6 +358,7 @@ export async function brief(
       ]);
       const accepted = acceptSummary(out?.summary, j);
       summary = accepted ?? fallback;
+      nextStep = acceptSummary(out?.next_step, j) ?? fallbackStep;
       trace({
         type: "model.end", crm: crm.name, model, ms: Date.now() - m0,
         raw: typeof out?.summary === "string" ? out.summary : out === undefined ? undefined : JSON.stringify(out),
@@ -274,6 +378,7 @@ export async function brief(
   return {
     verdict: j.verdict,
     summary,
+    nextStep,
     owner: j.owner,
     lastTouch: j.lastTouch,
     status: j.status,

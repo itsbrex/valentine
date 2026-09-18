@@ -34,6 +34,7 @@ export function renderVerdict(v: Verdict): string {
         : pc.dim(pc.bold("❓ Ambiguous"));
 
   const lines = [head, v.summary];
+  if (v.nextStep) lines.push(pc.magenta("→ ") + v.nextStep);
   const meta: string[] = [];
   if (v.owner) meta.push(`Owner: ${v.owner}`);
   if (v.lastTouch) meta.push(`Last touch: ${v.lastTouch}`);

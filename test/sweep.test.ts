@@ -112,3 +112,45 @@ test("JSON: single source keeps the flat documented shape; multi adds sources[]"
   assert.equal(multi.sources.length, 2);
   assert.deepEqual(multi.sources.map((s: { crm: string }) => s.crm), ["salesforce", "attio"]);
 });
+
+// ─── read-only "act" links for the CRM that has nothing ──────────────────────
+
+import { createLinks } from "../src/sweep.js";
+import type { CRMConnector } from "../src/connectors/types.js";
+
+const formCrm = (): CRMConnector => ({
+  name: "Salesforce",
+  whoami: async () => ({ workspace: "t" }),
+  search: async () => [],
+  getContext: async () => ({ notes: [], lists: [], people: [] }),
+  webUrls: { create: (kind, p) => `https://sf/new/${kind}?${new URLSearchParams(Object.entries(p).filter((kv): kv is [string, string] => !!kv[1])).toString()}` },
+});
+
+test("createLinks: seeded from the other CRM's hit — company name, a known person, and a note carrying the record link", () => {
+  const links = createLinks(formCrm(), "eksretirement.com", {
+    crmName: "Attio",
+    facts: { matchName: "EKS Group, LLC", matchUrl: "https://app.attio.com/x/company/1", matchObject: "companies", domain: "eksretirement.com", matches: 1, people: ["Ed Strazzulla"], lists: [], notes: [], links: [] },
+  });
+  assert.deepEqual(links.map((l) => l.label), ["＋ Lead", "＋ Account"]);
+  assert.equal(links[0].url, "https://sf/new/lead?domain=eksretirement.com&name=EKS+Group%2C+LLC&person=Ed+Strazzulla&note=Attio%3A+https%3A%2F%2Fapp.attio.com%2Fx%2Fcompany%2F1");
+  assert.equal(links[1].url, "https://sf/new/company?domain=eksretirement.com&name=EKS+Group%2C+LLC&note=Attio%3A+https%3A%2F%2Fapp.attio.com%2Fx%2Fcompany%2F1");
+});
+
+test("createLinks: with nothing anywhere, the domain alone seeds the forms; a contact-level hit seeds the Account from its parent", () => {
+  assert.equal(createLinks(formCrm(), "nobody-here.example")[0].url, "https://sf/new/lead?domain=nobody-here.example");
+  const fromContact = createLinks(formCrm(), "fpbarch.com", {
+    crmName: "Salesforce",
+    facts: { matchName: "Ted Bruenich", matchObject: "people", parent: { label: "FPBA", url: "https://sf/Account/1" }, domain: "fpbarch.com", matches: 1, people: [], lists: [], notes: [], links: [] },
+  });
+  assert.equal(fromContact[0].url, "https://sf/new/lead?domain=fpbarch.com&name=FPBA&person=Ted+Bruenich");
+  assert.deepEqual(createLinks({ ...formCrm(), webUrls: undefined }, "x.com"), []);
+});
+
+test("sweepAll: a CRM that throws is flagged unreachable (not just ambiguous)", async () => {
+  const client = { messages: { create: async () => ({ content: [] as never }) } };
+  const conf = cfg({ crm: "salesforce", crms: ["salesforce", "attio"], attioKey: "k".repeat(20) });
+  const { sources } = await sweepAll(client as never, conf, "acme.com", { noModel: true });
+  assert.equal(sources[0].unreachable, true);
+  assert.equal(sources[1].unreachable, undefined);
+  assert.ok(!("unreachable" in combineVerdicts(sources)));
+});
