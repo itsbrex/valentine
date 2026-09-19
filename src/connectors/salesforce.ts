@@ -42,21 +42,19 @@ export class SalesforceAuthError extends Error {
   readonly code = "SALESFORCE_AUTH";
 }
 
-export class SalesforceConnector implements CRMConnector {
-  readonly name = "Salesforce";
-  readonly webUrls: WebUrls;
+/** The authenticated session: token (static or minted by the sid command),
+ *  one refresh-and-retry on 401, and a thin REST helper. Shared by the
+ *  read-only connector and — only when writes are opted in — the writer. */
+export class SalesforceSession {
   private token?: string;
   private readonly command?: string;
-  private instanceUrl: string;
+  readonly instanceUrl: string;
 
   constructor(auth: string | SalesforceAuth, instanceUrl: string) {
     if (typeof auth === "string") auth = { token: auth };
     this.token = auth.token;
     this.command = auth.command;
     this.instanceUrl = instanceUrl.replace(/\/+$/, "");
-    this.webUrls = {
-      create: (kind, p) => this.createUrl(kind, p),
-    };
   }
 
   private async accessToken(): Promise<string> {
@@ -70,31 +68,58 @@ export class SalesforceConnector implements CRMConnector {
     return this.token;
   }
 
-  private async soql(q: string): Promise<any[]> {
-    const url = `${this.instanceUrl}${API}/query?q=${encodeURIComponent(q)}`;
-    let res = await fetch(url, {
-      headers: { Authorization: `Bearer ${await this.accessToken()}` },
+  /** One REST call under `/services/data/v59.0`. 401 → refresh once via the
+   *  sid command, then SalesforceAuthError. Other errors carry the body. */
+  async request(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<any> {
+    const url = `${this.instanceUrl}${API}${path}`;
+    const init = (token: string): RequestInit => ({
+      method,
+      headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
+    let res = await fetch(url, init(await this.accessToken()));
     // Session expired and we can mint a fresh one → re-run the command, retry once.
     if (res.status === 401 && this.command) {
       this.token = undefined;
-      res = await fetch(url, {
-        headers: { Authorization: `Bearer ${await this.accessToken()}` },
-      });
+      res = await fetch(url, init(await this.accessToken()));
     }
     if (res.status === 401) {
-      const body = await res.text();
+      const text = await res.text();
       throw new SalesforceAuthError(
-        `Salesforce session expired or invalid (${body.slice(0, 120)}) — log in again in the browser` +
+        `Salesforce session expired or invalid (${text.slice(0, 120)}) — log in again in the browser` +
           (this.command ? " that the sid command reads" : "") + ".",
       );
     }
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Salesforce ${res.status} on query: ${body.slice(0, 200)}`);
+      const text = await res.text();
+      throw new Error(`Salesforce ${res.status} on ${method} ${path.split("?")[0]}: ${text.slice(0, 200)}`);
     }
-    const data = await res.json();
+    if (res.status === 204) return undefined;
+    return res.json();
+  }
+
+  async soql(q: string): Promise<any[]> {
+    const data = await this.request("GET", `/query?q=${encodeURIComponent(q)}`);
     return data?.records ?? [];
+  }
+}
+
+export class SalesforceConnector implements CRMConnector {
+  readonly name = "Salesforce";
+  readonly webUrls: WebUrls;
+  readonly session: SalesforceSession;
+  private instanceUrl: string;
+
+  constructor(auth: string | SalesforceAuth | SalesforceSession, instanceUrl: string) {
+    this.session = auth instanceof SalesforceSession ? auth : new SalesforceSession(auth, instanceUrl);
+    this.instanceUrl = this.session.instanceUrl;
+    this.webUrls = {
+      create: (kind, p) => this.createUrl(kind, p),
+    };
+  }
+
+  private soql(q: string): Promise<any[]> {
+    return this.session.soql(q);
   }
 
   async whoami(): Promise<{ workspace: string }> {
