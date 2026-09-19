@@ -150,14 +150,15 @@ conferencing URL from the calendar source (`Meeting` has neither yet).
 The expiring-token problem has a working local answer:
 [`salesforce-mcp-auto-auth-chrome`](https://github.com/kugamon/salesforce-mcp-auto-auth-chrome)
 (local checkout: `~/github/salesforce-mcp-auto-auth-chrome`). It reads the
-`sid` cookie straight from a logged-in browser (Chrome, Comet, Arc, Edge,
-Brave, Safari — decrypted via macOS Keychain), and that cookie IS a Salesforce
+`sid` cookie straight from a logged-in browser (Chrome, BrowserOS neo, Comet,
+Arc, Edge, Brave, Safari — decrypted via macOS Keychain), and that cookie IS a Salesforce
 session id the REST API accepts as a Bearer token. Keep a tab logged into the
 org and the session effectively never goes stale.
 
 **Verified end-to-end against a live org** (`cresa.my.salesforce.com`, the
 same instance the code-mode `salesforce-mcp` manual pins, with
-`SALESFORCE_BROWSERS=comet,chrome,safari`): the wrapper's per-call
+`SALESFORCE_BROWSERS=comet,chrome,safari`; since 2026-09-18 the local
+setup scans `neo,comet,chrome,safari`, BrowserOS neo first): the wrapper's per-call
 monkey-patch injected a fresh sid over a deliberately wrong construction-time
 token, and Valentine's own `SalesforceConnector` ran `search()` +
 `getContext()` successfully with a sid extracted the same way. One connector
