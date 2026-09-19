@@ -22,6 +22,9 @@ verdict. It never writes, sends, or moves anything.
 | `VALENTINE_SLACK_PORT` | no | Port for `valentine slack` (or `--port`). Defaults to `3141`. |
 | `VALENTINE_SLACK_BOT_TOKEN` | for `watch --notify slack` | Bot token (scopes `chat:write` + `im:write`) for the DM notifier. |
 | `VALENTINE_SLACK_DM_USER` | for `watch --notify slack` | Member ID (`U…`) the heads-up DMs go to. |
+| `VALENTINE_WRITES` | no | `1` switches on the **opt-in** Slack write-through buttons (Create in Attio, Claim owner, Link IDs, Log meeting…). Off by default; `0` forces off whatever the config says. Every write is confirmed in Slack. |
+| `VALENTINE_ATTIO_WRITE_KEY` | no | Attio token used for writes, so `VALENTINE_ATTIO_KEY` can stay read-only. Falls back to the read key when writes are on. |
+| `VALENTINE_MUTES_FILE` | no | Where the card's *Mute domain* / *Mark handled* state lives (default `~/.valentine/mutes.json`). |
 
 Set `ANTHROPIC_API_KEY` plus exactly one CRM key. Which CRM and which model
 provider are *choices*, not secrets — they live in `~/.valentine/config.json`
@@ -91,8 +94,12 @@ is set — it errors out with instructions instead.
     "people": ["Jane Founder"],
     "peopleLinks": [{ "label": "Jane Founder", "url": "https://app.attio.com/<ws>/person/p_1" }],
     "lists": [{ "list": "Passed", "kind": "list", "url": "https://app.attio.com/<ws>/collection/l_1" }],
-    "opportunity": { "list": "Opportunity: Acme Seed", "stage": "Negotiation", "open": true, "url": "…" },  // Salesforce
+    "opportunity": { "list": "Opportunity: Acme Seed", "stage": "Negotiation", "open": true, "url": "…",
+                     "amount": 1250000, "closeDate": "2026-12-01", "owner": "Brian Roach",
+                     "detail": "45,000 SF · Office · 60 mo" },   // Salesforce; amount/close/detail only when visible
     "activities": [{ "id": "00T…", "date": "2026-05-12", "kind": "email", "subject": "…", "url": "…" }], // Salesforce
+    "nextActivity": { "id": "00T…", "date": "2026-10-01", "kind": "call", "subject": "Renewal call",
+                      "owner": "Glenn Friedrich", "status": "Not Started", "url": "…" }, // soonest OPEN activity — someone is already on it
     "notes": ["passed, too early"],
     "links": [                     // click-to-act
       { "label": "Open in Attio", "url": "https://app.attio.com/<ws>/company/rec_abc" },
@@ -153,6 +160,9 @@ Example MCP client config (Claude Desktop / Cursor / any stdio MCP host):
 
 ## Guarantees for the calling agent
 
-- **Read-only.** No mutating method exists in the CRM connector contract.
+- **Read-only.** No mutating method exists in the CRM connector contract. The
+  CLI, `--json`, and the MCP tool never write. The one write path is the
+  opt-in Slack card (`VALENTINE_WRITES=1`, a separate `src/writers/` contract,
+  human-confirmed per write) — off unless you switch it on.
 - **Local.** Keys and data stay on the host; only the model call leaves.
 - **Deterministic surface.** Same JSON shape + exit codes on every run.

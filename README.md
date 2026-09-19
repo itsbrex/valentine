@@ -35,7 +35,19 @@ on your machine — see [`AGENTS.md`](./AGENTS.md) for Cursor, Claude Code, etc.
 ## It reads. It never writes.
 
 Valentine surfaces and warns — it never touches your data, sends a message, or
-moves a deal. There are no write tools in the codebase, by design.
+moves a deal. The read path has no write capability at all: the `CRMConnector`
+contract exposes no mutating method, by design.
+
+**Opt-in write-through (off by default).** The Slack card can carry the
+buttons from the design — *Create company + person in Attio*, *Claim owner*,
+*Link IDs*, *Fix Attio match*, *Log to both CRMs*, *＋ Lead in Salesforce* —
+if you switch writes on (`valentine init --writes`, or `VALENTINE_WRITES=1`).
+They live in a separate `src/writers/` contract behind the `valentine slack`
+interactivity endpoint, every one sits behind a Slack confirm dialog that
+spells out exactly what gets written, and Attio can use its own write token
+(`VALENTINE_ATTIO_WRITE_KEY`) so the read token stays read-only. Salesforce
+writes ride the same browser session the reads use. Leave it off and nothing
+changes: every button is a link.
 
 ## How it works — three moving parts
 
@@ -92,8 +104,20 @@ and click-to-act links (open the CRM record · website · LinkedIn):
   Salesforce and Attio values side by side; *Valentine says* gives one grounded
   next step; one action row per CRM opens the record, its activity/emails, or a
   prefilled Log call · New task · + Lead · + Account form — and says
-  `nothing in Attio` when a CRM has never seen them. Still read-only: every
-  button is a link, and a form is only saved when you press Save in the CRM.
+  `nothing in Attio` when a CRM has never seen them. Read-only by default:
+  every button is a link, and a form is only saved when you press Save in the
+  CRM. With `valentine slack` answering the card, a `···` menu adds Re-run
+  sweep · Copy SF/Attio ID · Mute domain 30d · Mark handled (local state, the
+  watch loop honours it); with writes opted in, the green write-through
+  buttons appear too, each behind a confirm dialog. The meeting heads-up also
+  links *Open event* / *Join* straight from the calendar entry.
+- **Salesforce depth** — the connector reads what a CRE ownership desk reads:
+  Accounts, Contacts *and unconverted Leads*; Opportunities with amount, close
+  date, owner and (when the org has them) the deal-shape fields — `45,000 SF ·
+  Office · 60 mo` — probed once and skipped when absent; the Task/Event behind
+  "last touched"; and what is *already scheduled* (open activities, soonest
+  first), so the next step becomes "Glenn already has a call on 2026-10-01 —
+  coordinate" instead of a cold outreach.
 
 ## Valentine Lab — watch it run
 

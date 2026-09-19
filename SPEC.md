@@ -70,7 +70,10 @@ valentine help | --version             # (P0)
 The Slack trigger is a small webhook server: it verifies the app's signing
 secret, acks within Slack's 3-second window, sweeps with the same read-only
 agent, and answers through `response_url` — ephemeral, visible only to the
-person who ran `/valentine`. No bot token; it cannot post on its own.
+person who ran `/valentine`. No bot token; it cannot post on its own. The same
+server is the card's interactivity endpoint: the `···` menu (re-run, copy id,
+mute domain, mark handled — local state only) always, the write-through
+buttons only when writes are opted in (§9).
 
 ## 7. Onboarding (`valentine init`)
 
@@ -113,8 +116,14 @@ Design rule: **the agent and triggers never import a specific CRM** — only the
 
 ## 9. Safety guarantees (load-bearing for trust)
 
-1. **Read-only, structurally.** No write tools exist in the codebase. The connector
-   interface exposes no mutating methods. This is enforced by *absence*, not config.
+1. **Read-only, structurally.** The read path has no write capability: the
+   `CRMConnector` interface exposes no mutating methods, and the CLI, JSON
+   output, MCP tool and watch loop only ever use it. This is enforced by
+   *absence*, not config. The single exception is deliberate and opt-in: the
+   Slack card's write-through buttons (`src/writers/`, a separate contract,
+   `writes: true` / `VALENTINE_WRITES=1`, each write behind a Slack confirm
+   dialog, Attio on its own write token). Off by default; nothing reaches a
+   writer unless a human pressed a button and confirmed it.
 2. **Never sends, never moves.** No messaging, no deal-stage changes, no emails.
 3. **Local & BYO-key.** Keys live on the user's machine; data flows only between the
    user's CRM and the user's chosen model. No Valentine servers.

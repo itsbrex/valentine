@@ -120,15 +120,77 @@ state matrix) is implemented for everything that can be a **link**:
   (ambiguous) instead of being swallowed into a false `clean` — found while
   building this: an expired browser session made cyth.com read as clean.
 
-**Parked — the interactive half.** The design's write-through buttons
-(*Create company + person in Attio*, *Claim owner*, *Link IDs*, *Fix Attio
-match*, *Log to both CRMs*, *Snooze*, overflow menus) need (a) a Slack
-interactivity endpoint on `valentine slack` and (b) CRM **write** scopes.
-(b) contradicts the read-only contract (SPEC §"Read-only, structurally";
-`CRMConnector` has no mutating method by design). If this is ever wanted it
-should be a separate, opt-in package with its own token, not a flag on
-Valentine. Calendar deep links (Open event / Join) need the event UID and
-conferencing URL from the calendar source (`Meeting` has neither yet).
+## Slack card v2 — the interactive half — SHIPPED 2026-09-18 (opt-in)
+
+Reopened on request the same day. Built as the separate, opt-in contract the
+note below asked for rather than a flag on the read path:
+
+- `src/writers/` (`CRMWriter`: create company/person/lead, claim owner, add
+  note, log activity, cross-link, Attio `rematch`). `SalesforceWriter` shares
+  the read connector's `SalesforceSession` (same sid command, same 401
+  refresh); `AttioWriter` takes `attioWriteKey` / `VALENTINE_ATTIO_WRITE_KEY`
+  so the read token can stay read-only. `makeWriter` returns nothing unless
+  `writes: true` / `VALENTINE_WRITES=1` (`init --writes`).
+- `valentine slack` is also the Interactivity Request URL: `block_actions`
+  payloads are verified with the same signing secret (a comma list lets one
+  server answer the slash app and the DM bot app), acked, and dispatched by
+  `src/slackactions.ts`. `/valentine note <target> <text>` is the one write
+  the slash command itself offers.
+- Card (`targetBlocks(…, { interactive: { writes } })`): the `···` menu
+  (Re-run sweep · Copy SF/Attio ID · Mute domain 30d · Mark handled — local
+  state in `~/.valentine/mutes.json`, honoured by the watch loop) whenever the
+  endpoint is up; with writes on, *＋ Create company + person* (Attio, seeded
+  from the SF hit), *Claim owner* (owner gap), *Link IDs* (both CRMs, not yet
+  cross-linked — detected from notes/description), *Fix Attio match* (name
+  doesn't fit the domain: moves the domain to a new company, notes both), *＋
+  Lead in Salesforce* / *＋ Company in Attio* / *Both + cross-link* when
+  nothing is anywhere, and on the heads-up *Claim SF owner* / *Log to both
+  CRMs*. Every write button carries a confirm dialog naming what is written.
+- Calendar: `Meeting.url` (`ical://ekevent/<id>?method=show&options=more`)
+  and `Meeting.joinUrl` (Zoom/Meet/Teams/Webex link from the URL field,
+  location or notes) → *Open event* / *Join* on the heads-up.
+- Still parked: *Snooze to T-5* and *Prep brief* (need the watch loop to
+  re-notify / the Lab to post in-thread), Attio *Add note* as a button (a
+  button can't take text without a modal, which needs a bot token — use
+  `/valentine note`).
+
+The original reasoning, kept for the record:
+
+> The design's write-through buttons need (a) a Slack interactivity endpoint
+> on `valentine slack` and (b) CRM **write** scopes. (b) contradicts the
+> read-only contract (SPEC §"Read-only, structurally"; `CRMConnector` has no
+> mutating method by design). If this is ever wanted it should be a separate,
+> opt-in package with its own token, not a flag on Valentine.
+
+## Salesforce depth from the ownership desk — SHIPPED 2026-09-18
+
+Ported from `~/github/salesforced` (the CRE SF ownership desk) after an
+inventory of every field it reads:
+
+- **Leads.** `search()` for people also returns unconverted Leads (`Email` /
+  `Website` by domain, `Name` / `Company` by name), marked `recordType: "Lead"`
+  with Lead deep links; a restricted Lead object costs nothing.
+- **Opportunity fields.** `Amount, CloseDate, Probability, Type, Owner.Name`
+  plus the desk's CRE custom fields (`Size__c, Size_Type__c, Term_Months__c,
+  Lease_Type__c`) — probed once per connector, dropping a tier on
+  `INVALID_FIELD`, so orgs without them lose nothing. Surfaced as
+  `ListMembership.amount/closeDate/owner/detail`, `$1.3M · closes … · 45,000
+  SF · Office` pills on the card, and in the model's facts.
+- **Open activities.** `OpenActivities` subquery, soonest first (the desk's
+  `nextTask` picked the *latest* due date — a known bug there), as
+  `CRMContext.upcoming` / `facts.nextActivity`; the template next step
+  becomes "Glenn already has a call scheduled for … — coordinate".
+- **Bug found live while porting:** for non-admin users Salesforce only
+  accepts `ORDER BY ActivityDate DESC, LastModifiedDate DESC` on
+  `ActivityHistories` (and `ASC, LastModifiedDate DESC` on `OpenActivities`);
+  the previous `NULLS LAST` was a MALFORMED_QUERY "implementation
+  restriction", so the "last touched" deep link had silently never resolved
+  for the browser-session user. Fixed; errors now carry the `errorCode`.
+- **Free-mail blocklist** moved into `gather.ts` (the desk's 18 domains + the
+  newer providers): a personal-mail target only searches people.
+- Not ported: the classic-search-page scraping (Valentine has SOQL), report
+  harvesting, the "unassigned-region" ladder (the placeholder-owner gap
+  already covers it), ZoomInfo columns.
 
 ## Other
 - ~~Multi-CRM merge (showcase idea 9)~~ — shipped 2026-08 as multi-CRM sweeps:
