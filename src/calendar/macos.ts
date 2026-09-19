@@ -73,11 +73,30 @@ function run(argv) {
       start: Math.round(e.startDate.timeIntervalSince1970 * 1000),
       calendar: e.calendar.isNil() ? undefined : ObjC.unwrap(e.calendar.title),
       attendees: atts,
+      // Where a conferencing link may hide: the URL field, the location, the notes.
+      link: e.URL.isNil() ? undefined : ObjC.unwrap(e.URL.absoluteString),
+      location: e.location.isNil() ? undefined : ObjC.unwrap(e.location),
+      notes: e.notes.isNil() ? undefined : ObjC.unwrap(e.notes),
     });
   }
   return JSON.stringify(out);
 }
 `;
+
+const JOIN_RE = /https?:\/\/[^\s<>"')\]]*(?:zoom\.us\/[jw]\/|meet\.google\.com\/|teams\.microsoft\.com\/l\/meetup-join|teams\.live\.com\/meet|webex\.com\/(?:meet|join)|whereby\.com\/|around\.co\/)[^\s<>"')\]]*/i;
+
+/** The conferencing URL in an event, from its URL field, location, or notes. */
+export function joinUrlOf(e: { link?: string; location?: string; notes?: string }): string | undefined {
+  for (const s of [e.link, e.location, e.notes]) {
+    const m = s && JOIN_RE.exec(s);
+    if (m) return m[0].replace(/[.,;]+$/, "");
+  }
+  return undefined;
+}
+
+/** `ical://ekevent/<eventIdentifier>?method=show&options=more` opens the event
+ *  in Calendar.app — the same link Spotlight and Reminders use. */
+export const eventUrl = (id: string): string => `ical://ekevent/${encodeURIComponent(id)}?method=show&options=more`;
 
 export class MacosCalendarSource implements CalendarSource {
   readonly name = "macOS Calendar";
@@ -97,6 +116,9 @@ export class MacosCalendarSource implements CalendarSource {
           : `macOS Calendar returned: ${JSON.stringify(parsed).slice(0, 120)}`,
       );
     }
-    return parsed as Meeting[];
+    return (parsed as (Meeting & { link?: string; location?: string; notes?: string })[]).map(({ link, location, notes, ...m }) => {
+      const joinUrl = joinUrlOf({ link, location, notes });
+      return { ...m, url: eventUrl(m.id), ...(joinUrl ? { joinUrl } : {}) };
+    });
   }
 }

@@ -17,7 +17,9 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 import type { Config } from "./config.js";
-import { activeCrms } from "./config.js";
+import { activeCrms, writesEnabled } from "./config.js";
+import { isQuiet, loadMutes } from "./mutes.js";
+import { FREEMAIL } from "./gather.js";
 import { missingCrmCreds } from "./connectors/index.js";
 import { makeClient } from "./models.js";
 import { sweepAll, CRM_LABELS } from "./sweep.js";
@@ -29,12 +31,7 @@ import { meetingMessage, type MeetingItem } from "./slackblocks.js";
 
 const STATE_FILE = join(homedir(), ".valentine", "watch-state.json");
 
-/** Personal-mail domains — a domain sweep of gmail.com is meaningless. */
-export const FREEMAIL = new Set([
-  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
-  "msn.com", "yahoo.com", "icloud.com", "me.com", "mac.com", "aol.com",
-  "proton.me", "protonmail.com", "pm.me", "hey.com", "fastmail.com",
-]);
+export { FREEMAIL } from "./gather.js";
 
 const domainOf = (email?: string) => email?.split("@")[1]?.toLowerCase();
 
@@ -142,9 +139,11 @@ export async function watch(cfg: Config, args: string[] = []): Promise<void> {
       process.exit(1);
     }
 
+    const quiet = loadMutes();
     for (const m of meetings) {
       if (state[m.id]) continue;
-      const targets = sweepTargets(m).slice(0, 3); // cap the model spend per meeting
+      // Muted domains / targets marked handled from a card are skipped.
+      const targets = sweepTargets(m).filter((t) => !isQuiet(t, quiet)).slice(0, 3); // cap the model spend per meeting
       if (targets.length === 0) continue;
 
       const mins = Math.max(1, Math.round((m.start - Date.now()) / 60000));
@@ -165,11 +164,17 @@ export async function watch(cfg: Config, args: string[] = []): Promise<void> {
       const lines = items.map((it) =>
         it.res ? verdictLine(it.target, it.res.combined) : `❓ ${it.target} — sweep failed: ${it.error}`,
       );
-      const rich = meetingMessage(m.title, mins, items, {
-        crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "),
-        model: cfg.model,
-        elapsedMs: Date.now() - t0,
-      });
+      // Buttons on the DM need the bot app's Interactivity URL pointed at
+      // `valentine slack`; they are only rendered when writes are on, which is
+      // the same opt-in that makes running that server worthwhile.
+      const writes = writesEnabled(cfg);
+      const rich = meetingMessage(
+        m.title,
+        mins,
+        items,
+        { crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "), model: cfg.model, elapsedMs: Date.now() - t0, writes },
+        { meeting: { start: m.start, url: m.url, joinUrl: m.joinUrl }, ...(writes ? { interactive: { writes } } : {}) },
+      );
       console.log(pc.dim(`  done in ${((Date.now() - t0) / 1000).toFixed(1)}s`));
 
       await notify(channel, `${m.title} in ${mins} min`, lines.join("\n"), { blocks: rich.blocks });

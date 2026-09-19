@@ -2,8 +2,10 @@
 // never on a specific CRM. Adding a CRM (e.g. HubSpot) = one new file
 // implementing this interface, zero changes elsewhere.
 //
-// Note: there are NO mutating methods here, by design. Valentine is read-only,
-// enforced by the absence of any write capability in the contract itself.
+// Note: there are NO mutating methods here, by design. Valentine's read path
+// is read-only, enforced by the absence of any write capability in the
+// contract itself. The opt-in Slack write-through lives in a SEPARATE
+// contract (src/writers/) that nothing on the read path imports.
 // `webUrls` builds links to the CRM's own web app (record tabs, search, a
 // prefilled new-record form) — pure string construction, no I/O, and nothing
 // is written until a human submits the form in their browser.

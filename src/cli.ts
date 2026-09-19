@@ -13,6 +13,7 @@ import {
   saveConfig,
   parseCrms,
   activeCrms,
+  writesEnabled,
   CRM_IDS,
   type Config,
   type OnnxDtype,
@@ -91,6 +92,10 @@ function runInitHeadless(cfg: Config, args: string[]): void {
   }
   cfg.salesforceInstanceUrl = getFlag(args, "instance-url") ?? cfg.salesforceInstanceUrl;
   cfg.salesforceSidCommand = getFlag(args, "sid-command") ?? cfg.salesforceSidCommand;
+  // --writes / --no-writes: the opt-in Slack write-through (off by default).
+  if (args.includes("--writes")) cfg.writes = true;
+  if (args.includes("--no-writes")) cfg.writes = false;
+  cfg.attioWriteKey = getFlag(args, "attio-write-key") ?? cfg.attioWriteKey;
 
   const provider = (getFlag(args, "provider") as Config["provider"]) || cfg.provider;
   if (provider !== "anthropic" && provider !== "ollama" && provider !== "onnx")
@@ -382,7 +387,8 @@ async function runLookup(cfg: Config, target: string, json: boolean, args: strin
   // the same rendering the watch daemon sends, handy for sharing or testing.
   const channel = getFlag(args, "notify") as NotifyChannel | undefined;
   if (channel) {
-    const rich = slashMessage(target, res!, { crms: crmNames, elapsedMs: res!.elapsedMs });
+    const writes = writesEnabled(cfg);
+    const rich = slashMessage(target, res!, { crms: crmNames, elapsedMs: res!.elapsedMs, writes }, writes ? { interactive: { writes } } : {});
     try {
       await notify(channel, target, rich.text, { blocks: rich.blocks });
       p.log.success(`sent to ${channel}`);
@@ -410,6 +416,8 @@ function printHelp(): void {
       "  --crm <attio|affinity|salesforce> --crm-key <k> --instance-url <url>\n" +
       "  --crms <a,b>        sweep several CRMs, first is primary (e.g. salesforce,attio)\n" +
       "  --sid-command <cmd> Salesforce: command that prints a fresh token (self-refreshing)\n" +
+      "  --writes            init: switch on the Slack card's write-through buttons (opt-in;\n" +
+      "                      each write confirmed in Slack). --attio-write-key <k> for a write token\n" +
       "  --provider <anthropic|ollama> --ollama-host <url> --anthropic-key <k> --model <m>\n" +
       "                      headless `init` inputs (or use env vars below)\n" +
       "  --port <n>          `slack` server port (default 3141)\n" +
@@ -423,6 +431,7 @@ function printHelp(): void {
       pc.dim(
         "Env: VALENTINE_ATTIO_KEY · VALENTINE_AFFINITY_KEY · VALENTINE_SALESFORCE_KEY (+_INSTANCE_URL)\n" +
           "     ANTHROPIC_API_KEY · OLLAMA_HOST · VALENTINE_MODEL · VALENTINE_SLACK_SIGNING_SECRET\n" +
+          "     VALENTINE_WRITES=1 · VALENTINE_ATTIO_WRITE_KEY (write-through, off by default)\n" +
           "Agents: see AGENTS.md, or run the MCP server with `valentine mcp`.\n" +
           "Exit codes: 0 clean · 10 prior contact · 20 ambiguous · 1 error",
       ),

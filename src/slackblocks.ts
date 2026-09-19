@@ -10,18 +10,25 @@
 //   other      website, LinkedIn
 //   footer     what was swept, timing, model
 //
-// Everything here is a link. Valentine stays read-only: the "act" buttons open
-// prefilled new-record forms in the CRM's own web app, and nothing is saved
-// until a human presses Save there. Interactive (write-through) buttons would
-// need a Slack interactivity endpoint and CRM write scopes — parked in
-// backlog.md as a deliberate non-goal.
+// By default everything here is a link. Valentine stays read-only: the "act"
+// buttons open prefilled new-record forms in the CRM's own web app, and
+// nothing is saved until a human presses Save there.
+//
+// With `interactive` set (the `valentine slack` endpoint answers the card)
+// the card also carries an overflow menu (re-run · copy ids · mute · handled —
+// local state, never the CRM) and, when writes are switched on
+// (`writes: true` / VALENTINE_WRITES=1), the write-through buttons from the
+// design: Create in Attio · Claim owner · Link IDs · Fix Attio match · Log to
+// both CRMs. Each write button carries its payload in `value` and a confirm
+// dialog that spells out what gets written; the handler is src/slackactions.ts.
 //
 // Slack limits enforced: ≤50 blocks, ≤10 fields per section, ≤5 buttons per
 // row (25 is the hard cap; 5 keeps one line), button text ≤75, section text
 // ≤3000, header ≤150. Every message also carries a plain `text` fallback.
 
-import type { Verdict, RecordLink, BriefFacts } from "./connectors/types.js";
+import type { Verdict, RecordLink, BriefFacts, ListMembership, Activity } from "./connectors/types.js";
 import { CRM_LABELS, type SweepResult, type SourceVerdict } from "./sweep.js";
+import { money } from "./brief.js";
 
 type Block = Record<string, unknown>;
 
@@ -35,7 +42,7 @@ const LABEL: Record<Verdict["verdict"], string> = {
   clean: "No prior contact",
   ambiguous: "Needs a look",
 };
-const LIMITS = { blocks: 50, fields: 10, buttons: 5, buttonText: 75, sectionText: 3000, header: 150, fieldText: 2000 } as const;
+const LIMITS = { blocks: 50, fields: 10, buttons: 5, buttonText: 75, sectionText: 3000, header: 150, fieldText: 2000, value: 2000, optionValue: 75 } as const;
 
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const mrkdwn = (text: string): Block => ({ type: "section", text: { type: "mrkdwn", text: clip(text, LIMITS.sectionText) } });
@@ -64,19 +71,81 @@ class Ids {
   }
 }
 
-function buttonRow(links: RecordLink[], ids: Ids): Block | undefined {
+/** A write-through button: no URL, a payload for the interactivity endpoint,
+ *  and a confirm dialog naming what gets written. */
+export interface ActionButton {
+  label: string;
+  action: CardAction;
+  primary?: boolean;
+  confirm?: { title: string; text: string; ok?: string };
+}
+type Btn = RecordLink | ActionButton;
+const isAction = (b: Btn): b is ActionButton => "action" in b;
+
+function buttonRow(links: Btn[], ids: Ids): Block | undefined {
+  return buttonRows(links, ids, 1)[0];
+}
+
+/** Buttons in rows of ≤5. `maxRows` 1 keeps the read-only rows one line (extra
+ *  links are dropped, as before); interactive rows may spill to a second. */
+function buttonRows(links: Btn[], ids: Ids, maxRows = 2): Block[] {
   const seen = new Set<string>();
   const els = links
-    .filter((l) => l.url && !seen.has(l.url) && seen.add(l.url))
-    .slice(0, LIMITS.buttons)
-    .map((l) => ({
-      type: "button",
-      text: { type: "plain_text", text: clip(l.label, LIMITS.buttonText), emoji: true },
-      url: l.url,
-      action_id: ids.next(l.label),
-    }));
-  return els.length ? { type: "actions", elements: els } : undefined;
+    .filter((l) => {
+      const key = isAction(l) ? `act:${l.label}` : l.url;
+      return !!key && !seen.has(key) && seen.add(key);
+    })
+    .slice(0, LIMITS.buttons * maxRows)
+    .map((l) => {
+      const base = { type: "button", text: { type: "plain_text", text: clip(l.label, LIMITS.buttonText), emoji: true }, action_id: ids.next(l.label) };
+      if (!isAction(l)) return { ...base, url: l.url };
+      return {
+        ...base,
+        value: JSON.stringify(l.action).slice(0, LIMITS.value),
+        ...(l.primary ? { style: "primary" } : {}),
+        ...(l.confirm
+          ? {
+              confirm: {
+                title: { type: "plain_text", text: clip(l.confirm.title, 100) },
+                text: { type: "mrkdwn", text: clip(l.confirm.text, 300) },
+                confirm: { type: "plain_text", text: l.confirm.ok ?? "Do it" },
+                deny: { type: "plain_text", text: "Cancel" },
+              },
+            }
+          : {}),
+      };
+    });
+  const rows: Block[] = [];
+  for (let i = 0; i < els.length; i += LIMITS.buttons) rows.push({ type: "actions", elements: els.slice(i, i + LIMITS.buttons) });
+  return rows;
 }
+
+/** The ··· menu. Option values are capped at 75 chars by Slack, so they are
+ *  `op|arg`, not JSON. Nothing here touches the CRM. */
+function overflow(items: { label: string; value: string }[], ids: Ids): Block {
+  return {
+    type: "overflow",
+    action_id: ids.next("more"),
+    options: items.slice(0, 5).map((o) => ({ text: { type: "plain_text", text: clip(o.label, LIMITS.buttonText) }, value: o.value.slice(0, LIMITS.optionValue) })),
+  };
+}
+
+// ---------------------------------------------------------------- card actions
+
+/** What a write-through button asks the endpoint to do. Carried verbatim in
+ *  the button's `value`; validated again by the handler before any write. */
+export type CardAction =
+  | { op: "attio_create"; domain?: string; name?: string; person?: string; email?: string; from?: { crm: string; id: string; url?: string } }
+  | { op: "sf_create_lead"; domain?: string; name?: string; person?: string; email?: string; from?: { crm: string; id: string; url?: string } }
+  | { op: "create_both"; domain?: string; name?: string; person?: string; email?: string }
+  | { op: "claim"; crm: "salesforce" | "attio"; object: "companies" | "people"; id: string }
+  | { op: "crosslink"; sf: { object: "companies" | "people"; id: string; url?: string }; attio: { object: "companies" | "people"; id: string; url?: string } }
+  | { op: "attio_rematch"; domain: string; id: string; name: string; note?: string }
+  | { op: "log_meeting"; title: string; start?: number; targets: { crm: "salesforce" | "attio"; object: "companies" | "people"; id: string }[] };
+
+/** The ··· menu ops (`op|arg`). */
+export type MenuOp = "rerun" | "copy" | "mute" | "handled";
+export const menuValue = (op: MenuOp, ...args: string[]): string => [op, ...args].join("|");
 
 function fieldsBlock(items: { label: string; value: string }[]): Block | undefined {
   const fields = items
@@ -140,7 +209,48 @@ const ownerGap = (s: SourceVerdict): boolean => s.verdict === "prior_contact" &&
 
 export interface CardOptions {
   /** Meeting heads-up: one domain-named action row (record per CRM + Log meeting) instead of a row per CRM. */
-  meeting?: { title: string };
+  meeting?: { title: string; start?: number };
+  /** Set when `valentine slack` will answer the card's interactive elements.
+   *  `writes` adds the write-through buttons on top of the local-only menu. */
+  interactive?: { writes: boolean };
+}
+
+/** The record ids a write needs, from a source verdict. */
+const recordOf = (s: SourceVerdict): { object: "companies" | "people"; id: string; url?: string } | undefined =>
+  s.citations[0] ? { object: s.facts?.matchObject ?? "companies", id: s.citations[0], url: s.facts?.matchUrl } : undefined;
+
+/** Two records already point at each other when one's notes / description
+ *  carry the other's id or link. Best-effort: notes are trimmed to three. */
+function crosslinked(a: SourceVerdict, b: SourceVerdict): boolean {
+  const has = (s: SourceVerdict, other: SourceVerdict) => {
+    const needles = [other.citations[0], other.facts?.matchUrl].filter((x): x is string => !!x);
+    return (s.facts?.notes ?? []).some((n) => needles.some((x) => n.includes(x)));
+  };
+  return has(a, b) || has(b, a);
+}
+
+/** Does the matched name plausibly belong to the domain? "Ware Malcomb" for
+ *  waremalcomb.com yes; "Language Services Associates" no. */
+function nameFitsDomain(name: string | undefined, domain: string): boolean {
+  if (!name || !/\./.test(domain)) return true;
+  const label = domain.split(".")[0].replace(/[^a-z0-9]/g, "");
+  const n = norm(name).replace(/\s+/g, "");
+  if (!label || !n) return true;
+  const [a, b] = n.length < label.length ? [n, label] : [label, n];
+  return a.length >= 4 ? b.startsWith(a) || b.includes(a) : b.startsWith(a);
+}
+
+/** Seed for "Create in Attio / Lead in SF" from the CRM that knows the company. */
+function seedFrom(s: SourceVerdict | undefined, domain: string): { domain?: string; name?: string; person?: string; from?: { crm: string; id: string; url?: string } } {
+  const f = s?.facts;
+  const dom = f?.domain ?? (/\./.test(domain) ? domain : undefined);
+  if (!s || !f) return { domain: dom, name: /\./.test(domain) ? undefined : domain };
+  return {
+    domain: dom,
+    name: f.matchObject === "companies" ? f.matchName : f.parent?.label,
+    person: f.matchObject === "people" ? f.matchName : f.people[0],
+    ...(s.citations[0] ? { from: { crm: CRM_LABELS[s.crm], id: s.citations[0], url: f.matchUrl } } : {}),
+  };
 }
 
 /** Blocks for one target, across every source in the sweep. Returns the
@@ -198,8 +308,10 @@ export function targetBlocks(target: string, res: SweepResult, idPrefix: string,
   if (fblock) blocks.push(fblock);
 
   // ---- action rows
+  const ia = opts.interactive;
+  const writes = !!ia?.writes;
   if (opts.meeting) {
-    const row: RecordLink[] = [];
+    const row: Btn[] = [];
     for (const s of found) {
       const f = s.facts!;
       if (f.matchUrl) row.push({ label: `${short(s.crm)} ${recordNoun(f)}`, url: f.matchUrl });
@@ -208,13 +320,39 @@ export function targetBlocks(target: string, res: SweepResult, idPrefix: string,
       const log = s.facts!.actions?.find((a) => /meeting/i.test(a.label));
       if (log) row.push(log);
     }
-    const b = buttonRow(row, ids);
-    if (b) blocks.push(context(`*${esc(domain.toUpperCase())}*`), b);
+    if (writes) row.push(...meetingWrites(found, domain, opts.meeting));
+    const rows = buttonRows(row, ids, writes ? 2 : 1);
+    if (rows.length) blocks.push(context(`*${esc(domain.toUpperCase())}*`), ...rows);
   } else {
-    for (const s of res.sources) blocks.push(...crmRow(s, found, ids));
-    const other = otherLinks(found[0] ?? clean[0]);
-    const b = buttonRow(other, ids);
-    if (b) blocks.push(context("*OTHER*"), b);
+    for (const s of res.sources) blocks.push(...crmRow(s, found, ids, domain, writes ? res.sources : undefined));
+    const other: Btn[] = otherLinks(found[0] ?? clean[0]);
+    if (writes && !found.length && !unreachable.length) {
+      const seed = seedFrom(undefined, domain);
+      const hasSf = res.sources.some((s) => s.crm === "salesforce");
+      const hasAttio = res.sources.some((s) => s.crm === "attio");
+      if (hasSf && hasAttio)
+        other.unshift({
+          label: "Both + cross-link",
+          action: { op: "create_both", ...seed },
+          confirm: { title: "Create in both CRMs?", text: `Lead *${esc(seed.name ?? domain)}* in Salesforce and company *${esc(seed.name ?? domain)}* in Attio, each noting the other's link.`, ok: "Create both" },
+        });
+    }
+    if (ia) {
+      const sf = res.sources.find((s) => s.crm === "salesforce");
+      const at = res.sources.find((s) => s.crm === "attio");
+      const menu: { label: string; value: string }[] = [{ label: "Re-run sweep", value: menuValue("rerun", target) }];
+      if (sf?.citations[0]) menu.push({ label: "Copy SF ID", value: menuValue("copy", "SF", sf.citations[0]) });
+      if (at?.citations[0]) menu.push({ label: "Copy Attio ID", value: menuValue("copy", "Attio", at.citations[0]) });
+      if (/\./.test(domain)) menu.push({ label: "Mute domain 30d", value: menuValue("mute", domain) });
+      menu.push({ label: "Mark handled", value: menuValue("handled", target) });
+      const rows = buttonRows(other, ids, 1);
+      const row = rows[0] ?? { type: "actions", elements: [] };
+      (row.elements as unknown[]).push(overflow(menu, ids));
+      blocks.push(context("*OTHER*"), row);
+    } else {
+      const b = buttonRow(other, ids);
+      if (b) blocks.push(context("*OTHER*"), b);
+    }
   }
 
   const says = [...new Set(found.map((s) => s.nextStep).filter((x): x is string => !!x))];
@@ -233,7 +371,8 @@ function singleFields(s: SourceVerdict): { label: string; value: string }[] {
     const [date, kind] = [s.lastTouch.slice(0, 10), s.lastTouch.match(/\((\w+)\)/)?.[1]];
     out.push({ label: "Last touch", value: `${link(date, f.lastTouchUrl)}${kind ? ` · ${esc(kind)}` : ""}${f.stale ? pill(f.stale) : ""}` });
   }
-  if (f.opportunity) out.push({ label: "Opportunity", value: link(f.opportunity.list.replace(/^Opportunity: /, ""), f.opportunity.url) + (f.opportunity.stage ? pill(f.opportunity.stage) : "") });
+  if (f.opportunity) out.push({ label: "Opportunity", value: link(f.opportunity.list.replace(/^Opportunity: /, ""), f.opportunity.url) + (f.opportunity.stage ? pill(f.opportunity.stage) : "") + dealPills(f.opportunity) });
+  if (f.nextActivity?.date) out.push({ label: "Next", value: nextValue(f.nextActivity) });
   const other = f.lists.filter((l) => l !== f.opportunity).slice(0, 2);
   if (other.length) out.push({ label: other[0].kind === "campaign" ? "Campaign" : "List", value: other.map((l) => link(l.list, l.url)).join(" · ") });
   if (s.status && !f.opportunity?.stage) out.push({ label: "Stage / outcome", value: other[0]?.memberUrl ? link(s.status, other[0].memberUrl) : esc(s.status) });
@@ -256,8 +395,9 @@ function pairedFields(found: SourceVerdict[]): { label: string; value: string }[
   out.push({ label: `Last touch (${tag(a)} / ${tag(b)})`, value: `${touch(a)} / ${touch(b)}` });
   for (const s of found) {
     const f = s.facts!;
-    if (f.opportunity) out.push({ label: `Opportunity (${tag(s)})`, value: link(f.opportunity.list.replace(/^Opportunity: /, ""), f.opportunity.url) + (f.opportunity.stage ? pill(f.opportunity.stage) : "") });
+    if (f.opportunity) out.push({ label: `Opportunity (${tag(s)})`, value: link(f.opportunity.list.replace(/^Opportunity: /, ""), f.opportunity.url) + (f.opportunity.stage ? pill(f.opportunity.stage) : "") + dealPills(f.opportunity) });
   }
+  for (const s of found) if (s.facts!.nextActivity?.date) out.push({ label: `Next (${tag(s)})`, value: nextValue(s.facts!.nextActivity!) });
   for (const s of found) {
     const people = peopleValue(s.facts!);
     if (people) out.push({ label: `${tag(s)} ${s.facts!.matchObject === "people" ? "contact" : "people"}`, value: people });
@@ -275,6 +415,14 @@ function cleanFields(sources: SourceVerdict[], domain: string): { label: string;
   return out;
 }
 
+/** `$1.2M` `closes 2026-12-01` `45,000 SF · Office` pills after the stage. */
+const dealPills = (o: ListMembership): string =>
+  [o.amount != null ? money(o.amount) : "", o.closeDate ? `closes ${o.closeDate}` : "", o.detail ?? ""].filter(Boolean).map(pill).join("");
+
+/** "2026-10-01 · call · Glenn Friedrich" with the date linked to the Task/Event. */
+const nextValue = (a: Activity): string =>
+  [link(a.date!, a.url), a.subject ? esc(a.subject) : esc(a.kind), a.owner ? esc(a.owner) : ""].filter(Boolean).join(" · ");
+
 function peopleValue(f: BriefFacts): string | undefined {
   const linked = f.peopleLinks?.length ? f.peopleLinks.map((p) => link(p.label, p.url)) : f.people.map(esc);
   if (!linked.length) return undefined;
@@ -282,35 +430,116 @@ function peopleValue(f: BriefFacts): string | undefined {
   return f.people.length > 3 ? `${shown} +${f.people.length - 3}` : shown;
 }
 
+/** The write buttons for one CRM's row. `sources` is only passed when writes are on. */
+function crmWrites(s: SourceVerdict, found: SourceVerdict[], domain: string, sources: SourceVerdict[]): ActionButton[] {
+  const out: ActionButton[] = [];
+  const f = s.facts;
+  const rec = recordOf(s);
+  const crmName = CRM_LABELS[s.crm];
+  if (s.crm !== "salesforce" && s.crm !== "attio") return out;
+  if (s.verdict === "prior_contact" && f && rec) {
+    if (ownerGap(s))
+      out.push({
+        label: "Claim owner",
+        action: { op: "claim", crm: s.crm, object: rec.object, id: rec.id },
+        confirm: { title: `Claim in ${crmName}?`, text: `Set *${esc(f.matchName ?? rec.id)}* owner to you in ${crmName}.`, ok: "Claim" },
+      });
+    const other = found.find((o) => o !== s && (o.crm === "salesforce" || o.crm === "attio"));
+    const orec = other && recordOf(other);
+    if (other && orec && s.crm === "salesforce" && !crosslinked(s, other))
+      out.push({
+        label: "Link IDs",
+        primary: true,
+        action: { op: "crosslink", sf: rec, attio: orec },
+        confirm: { title: "Cross-link records?", text: `Attio *${esc(other.facts?.matchName ?? orec.id)}* ↔ Salesforce *${esc(f.matchName ?? rec.id)}*. Each record gets the other's link (SF description, Attio note).`, ok: "Link" },
+      });
+    if (s.crm === "attio" && !nameFitsDomain(f.matchName, domain)) {
+      const sf = found.find((o) => o.crm === "salesforce");
+      const right = sf?.facts?.matchObject === "companies" ? sf.facts.matchName : sf?.facts?.parent?.label;
+      out.push({
+        label: "Fix Attio match",
+        action: { op: "attio_rematch", domain, id: rec.id, name: right ?? domain, ...(sf?.facts?.matchUrl ? { note: `Salesforce: ${sf.facts.matchUrl}` } : {}) },
+        confirm: { title: "Fix the Attio match?", text: `Move *${esc(domain)}* off *${esc(f.matchName ?? rec.id)}* onto a new company *${esc(right ?? domain)}*, with a note on both.`, ok: "Fix" },
+      });
+    }
+    return out;
+  }
+  if (s.verdict !== "clean" || s.unreachable) return out;
+  const seed = seedFrom(found[0], domain);
+  const nothingAnywhere = !found.length && !sources.some((x) => x.unreachable);
+  if (s.crm === "attio") {
+    const who = [seed.name ?? seed.domain ?? domain, seed.person].filter(Boolean).map((x) => `*${esc(x!)}*`).join(" and ");
+    out.push({
+      label: seed.person ? "＋ Create company + person" : "＋ Company in Attio",
+      primary: true,
+      action: { op: "attio_create", ...seed },
+      confirm: { title: "Create in Attio?", text: `Company ${who}${seed.domain ? ` (${esc(seed.domain)})` : ""}${seed.from ? `, source ${esc(seed.from.crm)} ${esc(seed.from.id)}` : ", source Valentine"}.`, ok: "Create" },
+    });
+  } else if (s.crm === "salesforce" && nothingAnywhere) {
+    // With Attio knowing the company, the prefilled Lightning forms (＋ Lead /
+    // ＋ Account, seeded from Attio) stay the way in — no write needed.
+    out.push({
+      label: "＋ Lead in Salesforce",
+      primary: true,
+      action: { op: "sf_create_lead", ...seed },
+      confirm: { title: "Create a Lead?", text: `Lead *${esc(seed.name ?? domain)}*${seed.domain ? ` (${esc(seed.domain)})` : ""}, LeadSource Valentine, owner you.`, ok: "Create" },
+    });
+  }
+  return out;
+}
+
+/** Meeting heads-up writes: claim a gapped owner per CRM, fix a wrong Attio
+ *  match, log the meeting to every CRM that knows the company. */
+function meetingWrites(found: SourceVerdict[], domain: string, meeting: { title: string; start?: number }): ActionButton[] {
+  const out: ActionButton[] = [];
+  const targets: { crm: "salesforce" | "attio"; object: "companies" | "people"; id: string }[] = [];
+  for (const s of found) {
+    if (s.crm !== "salesforce" && s.crm !== "attio") continue;
+    const rec = recordOf(s);
+    if (!rec) continue;
+    targets.push({ crm: s.crm, object: rec.object, id: rec.id });
+    for (const w of crmWrites(s, found, domain, found)) if (w.action.op !== "crosslink") out.push({ ...w, label: w.action.op === "claim" ? `Claim ${short(s.crm)} owner` : w.label });
+  }
+  if (targets.length)
+    out.push({
+      label: targets.length > 1 ? "Log to both CRMs" : `Log meeting to ${CRM_LABELS[targets[0].crm]}`,
+      action: { op: "log_meeting", title: meeting.title, ...(meeting.start ? { start: meeting.start } : {}), targets },
+      confirm: { title: "Log this meeting?", text: `*${esc(meeting.title)}* logged as a meeting on ${targets.map((t) => CRM_LABELS[t.crm]).join(" + ")}.`, ok: "Log" },
+    });
+  return out;
+}
+
 /** One CRM's row: its label (+ state pill), its buttons, and for a CRM that
- *  has nothing, what a create form will be prefilled with. */
-function crmRow(s: SourceVerdict, found: SourceVerdict[], ids: Ids): Block[] {
+ *  has nothing, what a create form will be prefilled with. `sources` is passed
+ *  only when writes are on and adds the write-through buttons. */
+function crmRow(s: SourceVerdict, found: SourceVerdict[], ids: Ids, domain = "", sources?: SourceVerdict[]): Block[] {
   const name = CRM_LABELS[s.crm];
   const f = s.facts;
   if (s.unreachable) return [context(`*${name.toUpperCase()}*${pill("unreachable")}`)];
+  const writes = sources ? crmWrites(s, found, domain, sources) : [];
   if (s.verdict === "prior_contact" && f) {
-    const links: RecordLink[] = [];
+    const links: Btn[] = [];
     if (f.matchUrl) links.push({ label: `Open ${recordNoun(f)}`, url: f.matchUrl });
     if (f.parent) links.push({ label: "Account", url: f.parent.url });
     if (f.views?.activity) links.push({ label: "Activity", url: f.views.activity });
     if (f.views?.emails) links.push({ label: "Emails", url: f.views.emails });
     for (const a of f.actions ?? []) if (!/meeting/i.test(a.label)) links.push(a);
-    const row = buttonRow(links, ids);
-    return row ? [context(`*${name.toUpperCase()}*`), row] : [];
+    links.push(...writes);
+    const rows = buttonRows(links, ids, writes.length ? 2 : 1);
+    return rows.length ? [context(`*${name.toUpperCase()}*`), ...rows] : [];
   }
   // clean / ambiguous-but-readable
   const out: Block[] = [];
   const state = s.verdict === "clean" ? `nothing in ${name}` : `${f?.matches ?? "several"} matches — needs a look`;
   out.push(context(`*${name.toUpperCase()}*${pill(state)}`));
-  const links: RecordLink[] = [...(f?.actions ?? [])];
+  const links: Btn[] = [...writes, ...(f?.actions ?? [])];
   if (f?.searchUrl) links.push({ label: s.crm === "attio" ? "Companies in Attio" : `Search ${name}`, url: f.searchUrl });
-  const row = buttonRow(links, ids);
-  if (row) out.push(row);
+  out.push(...buttonRows(links, ids, writes.length ? 2 : 1));
   const seed = found[0];
-  if (f?.actions?.length && seed?.facts) {
+  if ((f?.actions?.length || writes.length) && seed?.facts) {
     const sf = seed.facts;
     const bits = [sf.matchName && `${esc(sf.matchObject === "people" ? "contact" : "name")} \`${esc(sf.matchName)}\``, sf.domain && `website \`${esc(sf.domain)}\``, sf.matchUrl && `note \`${CRM_LABELS[seed.crm]} record link\``].filter(Boolean);
-    if (bits.length) out.push(context(`prefills from ${CRM_LABELS[seed.crm]} → ${bits.join(" · ")} — nothing is saved until you press Save`));
+    if (bits.length) out.push(context(`prefills from ${CRM_LABELS[seed.crm]} → ${bits.join(" · ")} — ${writes.length ? `the green button writes them after you confirm${f?.actions?.length ? "; the form links save nothing until you press Save" : ""}` : "nothing is saved until you press Save"}`));
   }
   return out;
 }
@@ -341,13 +570,15 @@ export interface FooterMeta {
   /** A link back to the run (Valentine Lab). */
   runUrl?: string;
   runId?: string;
+  /** Write-through is on for this card (the footer says so instead of "read-only"). */
+  writes?: boolean;
 }
 
 function footer(res: SweepResult | undefined, meta: FooterMeta, lead = "swept"): Block {
   const swept = res
     ? res.sources.map((s) => link(CRM_LABELS[s.crm], s.facts?.matchUrl ?? s.facts?.searchUrl)).join(" + ")
     : esc(meta.crms);
-  const bits = [`${lead} ${swept}${meta.elapsedMs != null ? ` in ${(meta.elapsedMs / 1000).toFixed(1)}s` : ""}`, "read-only"];
+  const bits = [`${lead} ${swept}${meta.elapsedMs != null ? ` in ${(meta.elapsedMs / 1000).toFixed(1)}s` : ""}`, meta.writes ? "writes on · every write confirmed" : "read-only"];
   if (meta.model) bits.push(esc(meta.model.split("/").pop() ?? meta.model));
   if (meta.runId) bits.push(`run ${link(meta.runId, meta.runUrl)}`);
   return context(bits.join("  ·  "));
@@ -386,23 +617,37 @@ export interface MeetingItem {
 }
 
 /** The watch DM: one message per meeting, all its external attendees inside. */
+export interface MeetingLinks {
+  /** Epoch ms — carried into "Log to both CRMs". */
+  start?: number;
+  /** Deep link to the event (ical://…) and the conferencing URL, when the calendar source has them. */
+  url?: string;
+  joinUrl?: string;
+}
+
 export function meetingMessage(
   title: string,
   minutes: number,
   items: MeetingItem[],
   meta: FooterMeta,
+  opts: { meeting?: MeetingLinks; interactive?: CardOptions["interactive"] } = {},
 ): { text: string; blocks: Block[] } {
   const blocks: Block[] = [
     { type: "header", text: { type: "plain_text", text: clip(`📅 ${title}`, LIMITS.header), emoji: true } },
     context(`:clock3: in *${minutes} min*  ·  ${items.length} external ${items.length === 1 ? "domain" : "domains"}  ·  swept ${esc(meta.crms)}`),
   ];
+  const eventLinks: RecordLink[] = [];
+  if (opts.meeting?.url) eventLinks.push({ label: "Open event", url: opts.meeting.url });
+  if (opts.meeting?.joinUrl) eventLinks.push({ label: "Join", url: opts.meeting.joinUrl });
+  const ev = buttonRow(eventLinks, new Ids("ev"));
+  if (ev) blocks.push(ev);
   const lines: string[] = [`✦ ${title} in ${minutes} min`];
   const says: string[] = [];
   const saysFor: string[] = [];
   items.forEach((it, i) => {
     blocks.push(divider());
     if (it.res) {
-      const card = targetBlocks(it.target, it.res, `v${i}`, { meeting: { title } });
+      const card = targetBlocks(it.target, it.res, `v${i}`, { meeting: { title, start: opts.meeting?.start }, interactive: opts.interactive });
       blocks.push(...card.blocks);
       if (card.says[0]) {
         says.push(card.says[0]);
@@ -422,9 +667,9 @@ export function meetingMessage(
 }
 
 /** The slash-command reply (and the `--notify` DM) for one target. */
-export function slashMessage(target: string, res: SweepResult, meta: FooterMeta): { text: string; blocks: Block[] } {
+export function slashMessage(target: string, res: SweepResult, meta: FooterMeta, opts: Pick<CardOptions, "interactive"> = {}): { text: string; blocks: Block[] } {
   const v = res.combined;
-  const { blocks, says } = targetBlocks(target, res, "s");
+  const { blocks, says } = targetBlocks(target, res, "s", opts);
   const s = saysBlock(says);
   if (s) blocks.push(s);
   blocks.push(footer(res, { ...meta, elapsedMs: meta.elapsedMs ?? res.elapsedMs }));

@@ -1,7 +1,8 @@
 // Per-user config at ~/.valentine/config.json. Secrets may also come from env
-// (VALENTINE_ATTIO_KEY, VALENTINE_AFFINITY_KEY, VALENTINE_SALESFORCE_KEY +
-// VALENTINE_SALESFORCE_INSTANCE_URL, ANTHROPIC_API_KEY, OLLAMA_HOST,
-// VALENTINE_SLACK_SIGNING_SECRET). VALENTINE_MODEL overrides the model.
+// (VALENTINE_ATTIO_KEY, VALENTINE_ATTIO_WRITE_KEY, VALENTINE_AFFINITY_KEY,
+// VALENTINE_SALESFORCE_KEY + VALENTINE_SALESFORCE_INSTANCE_URL, ANTHROPIC_API_KEY,
+// OLLAMA_HOST, VALENTINE_SLACK_SIGNING_SECRET). VALENTINE_MODEL overrides the
+// model; VALENTINE_WRITES=1 switches the opt-in Slack write-through on.
 // Env-sourced values are never written back to disk, and the file itself is
 // kept at 0600 inside a 0700 directory — it holds live credentials.
 
@@ -39,6 +40,13 @@ export interface Config {
   /** ONNX quantization — q4 (~1.9 GB) unless overridden. */
   onnxDtype?: OnnxDtype;
   slackSigningSecret?: string;
+  /** OPT-IN write-through from the Slack card (Create in Attio, Claim owner,
+   *  Link IDs, Log meeting…). Off by default; VALENTINE_WRITES=1 also turns it
+   *  on. Every write sits behind a confirm dialog in Slack. */
+  writes?: boolean;
+  /** Attio token used for writes, so the read token can stay read-only.
+   *  Falls back to `attioKey` when writes are on and this is unset. */
+  attioWriteKey?: string;
   /** How a sweep runs. "brief" (default): deterministic CRM reads + one
    *  structured model call for the summary. "agent": the original tool-calling
    *  loop where the model decides what to read. VALENTINE_STRATEGY overrides. */
@@ -52,6 +60,14 @@ export function sweepStrategy(cfg: Config): SweepStrategy {
   const env = process.env.VALENTINE_STRATEGY?.trim().toLowerCase();
   if (env === "agent" || env === "brief") return env;
   return cfg.strategy === "agent" ? "agent" : "brief";
+}
+
+/** Writes are off unless the config or VALENTINE_WRITES says so. Env wins,
+ *  so a sandbox can force them off (`VALENTINE_WRITES=0`) whatever the file says. */
+export function writesEnabled(cfg: Config): boolean {
+  const env = process.env.VALENTINE_WRITES?.trim().toLowerCase();
+  if (env != null && env !== "") return env === "1" || env === "true" || env === "yes" || env === "on";
+  return cfg.writes === true;
 }
 
 // Values that came from the environment at load time, per config object.
@@ -76,6 +92,7 @@ export function loadConfig(): Config {
     }
   };
   fill("attioKey", process.env.VALENTINE_ATTIO_KEY);
+  fill("attioWriteKey", process.env.VALENTINE_ATTIO_WRITE_KEY);
   fill("affinityKey", process.env.VALENTINE_AFFINITY_KEY);
   fill("salesforceKey", process.env.VALENTINE_SALESFORCE_KEY);
   fill("salesforceInstanceUrl", process.env.VALENTINE_SALESFORCE_INSTANCE_URL);

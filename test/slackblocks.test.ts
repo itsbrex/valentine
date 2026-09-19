@@ -255,6 +255,109 @@ test("state 5 · meeting heads-up: 📅 header, timing context, one domain-named
   assert.ok(b.length <= 50);
 });
 
+// ─── interactive half (writes on) ────────────────────────────────────────────
+
+const WRITES = { interactive: { writes: true } };
+const els = (b: any): any[] => b.elements;
+const labelsOf = (b: any): string[] => els(b).map((e) => e.text?.text ?? e.type);
+const value = (b: any, label: string): any => JSON.parse(els(b).find((e) => e.text?.text === label).value);
+
+test("interactive · state 1: the Attio row gets a green Create button carrying the SF seed + confirm; the ··· menu and a writes-on footer appear; nothing else moves", () => {
+  const res = sweep([src("salesforce", sfContact), src("attio", cleanAttio)]);
+  const msg = slashMessage("fpbarch.com", res, { crms: "Salesforce + Attio", writes: true }, WRITES);
+  const blocks = msg.blocks as any[];
+  const rows = blocks.filter((b) => b.type === "actions");
+  assert.deepEqual(labelsOf(rows[0]), ["Open contact", "Account", "Activity", "Log call", "New task"], "SF row unchanged: owner is active, no write to offer");
+  assert.deepEqual(labelsOf(rows[1]), ["＋ Create company + person", "Companies in Attio"]);
+  const create = els(rows[1])[0];
+  assert.equal(create.style, "primary");
+  assert.equal(create.url, undefined);
+  assert.deepEqual(JSON.parse(create.value), { op: "attio_create", domain: "fpbarch.com", name: "FPBA", person: "Ted Bruenich", from: { crm: "Salesforce", id: "003C1", url: `${SF}/r/Contact/003C1/view` } });
+  assert.equal(create.confirm.title.text, "Create in Attio?");
+  assert.match(create.confirm.text.text, /Company \*FPBA\* and \*Ted Bruenich\* \(fpbarch\.com\), source Salesforce 003C1\./);
+  assert.equal(create.confirm.confirm.text, "Create");
+  assert.match(text(blocks.find((b) => b.type === "context" && /prefills from/.test(text(b)))), /green button writes them after you confirm/);
+  // ··· menu on the OTHER row
+  const other = rows[2];
+  assert.deepEqual(labelsOf(other), ["Website", "LinkedIn · Ted", "LinkedIn · company", "overflow"]);
+  const menu = els(other).at(-1);
+  assert.deepEqual(menu.options.map((o: any) => [o.text.text, o.value]), [["Re-run sweep", "rerun|fpbarch.com"], ["Copy SF ID", "copy|SF|003C1"], ["Mute domain 30d", "mute|fpbarch.com"], ["Mark handled", "handled|fpbarch.com"]]);
+  assert.ok(menu.options.every((o: any) => o.value.length <= 75));
+  assert.match(text(blocks.at(-1)), /writes on · every write confirmed/);
+  // and without the option, the read-only card is byte-for-byte what it was
+  const plain = slashMessage("fpbarch.com", res, { crms: "Salesforce + Attio" }).blocks as any[];
+  assert.ok(plain.every((b) => b.type !== "actions" || els(b).every((e: any) => e.type === "button" && e.url)));
+  assert.match(text(plain.at(-1)), /read-only/);
+});
+
+test("interactive · state 2: an owner gap gets Claim owner on that CRM's row; the SF create side stays the prefilled forms", () => {
+  const sfClean: Verdict = { ...cleanAttio, facts: cleanFacts({ actions: [{ label: "＋ Lead", url: `${SF}/o/Lead/new?defaultFieldValues=Company=EKS` }] }) };
+  const blocks = targetBlocks("eksretirement.com", sweep([src("salesforce", sfClean), src("attio", attioCompany)]), "s", WRITES).blocks as any[];
+  const rows = blocks.filter((b) => b.type === "actions");
+  assert.deepEqual(labelsOf(rows[0]), ["＋ Lead"], "no write button: Attio knows the company, the form is seeded from it");
+  assert.ok(labelsOf(rows[1]).includes("Claim owner"));
+  assert.deepEqual(value(rows[1], "Claim owner"), { op: "claim", crm: "attio", object: "companies", id: "146103df" });
+  assert.equal(els(rows[1]).find((e) => e.text.text === "Claim owner").confirm.title.text, "Claim in Attio?");
+});
+
+test("interactive · state 3: both CRMs know the company and nothing links them → Link IDs (primary, confirm) on the SF row; linked records get no button", () => {
+  const blocks = targetBlocks("cyth.com", sweep([src("salesforce", sfDeal), src("attio", attioDeal)]), "s", WRITES).blocks as any[];
+  const rows = blocks.filter((b) => b.type === "actions");
+  assert.ok(labelsOf(rows[0]).includes("Link IDs"));
+  const link = els(rows[0]).find((e) => e.text.text === "Link IDs");
+  assert.equal(link.style, "primary");
+  assert.deepEqual(JSON.parse(link.value), { op: "crosslink", sf: { object: "companies", id: "001PF", url: sfDeal.facts!.matchUrl }, attio: { object: "companies", id: "6859814e", url: attioDeal.facts!.matchUrl } });
+  assert.match(link.confirm.text.text, /Attio \*Cyth Systems, Inc\.\* ↔ Salesforce \*Cyth Systems\*/);
+  // cross-linked already (a note carries the other's id) → no Link IDs
+  const linkedSf: Verdict = { ...sfDeal, facts: { ...sfDeal.facts!, notes: ["Attio: 6859814e"] } };
+  const again = targetBlocks("cyth.com", sweep([src("salesforce", linkedSf), src("attio", attioDeal)]), "s", WRITES).blocks as any[];
+  assert.ok(!again.filter((b) => b.type === "actions").some((b) => labelsOf(b).includes("Link IDs")));
+});
+
+test("interactive · state 4: nothing anywhere → Lead in SF, Company in Attio, Both + cross-link, all confirmed; unreachable CRMs get no create", () => {
+  const blocks = targetBlocks("nobody-here.example", sweep([src("salesforce", cleanSf), src("attio", cleanAttio)], { ...cleanSf }), "s", WRITES).blocks as any[];
+  const rows = blocks.filter((b) => b.type === "actions");
+  assert.deepEqual(labelsOf(rows[0]), ["＋ Lead in Salesforce", "＋ Lead", "＋ Account"]);
+  assert.deepEqual(value(rows[0], "＋ Lead in Salesforce"), { op: "sf_create_lead", domain: "nobody-here.example" });
+  assert.deepEqual(labelsOf(rows[1]), ["＋ Company in Attio", "Companies in Attio"]);
+  assert.deepEqual(value(rows[1], "＋ Company in Attio"), { op: "attio_create", domain: "nobody-here.example" });
+  assert.equal(labelsOf(rows[2])[0], "Both + cross-link");
+  assert.deepEqual(value(rows[2], "Both + cross-link"), { op: "create_both", domain: "nobody-here.example" });
+  const dead = src("salesforce", { verdict: "ambiguous", summary: "Couldn't reach Salesforce", citations: [] }, { unreachable: true });
+  const rows2 = (targetBlocks("nobody-here.example", sweep([dead, src("attio", cleanAttio)]), "s", WRITES).blocks as any[]).filter((b) => b.type === "actions");
+  assert.ok(!rows2.some((b) => labelsOf(b).some((l) => /Both|Lead in Salesforce/.test(l))), "a CRM we couldn't read is not 'nothing there'");
+  assert.ok(rows2.some((b) => labelsOf(b).includes("＋ Company in Attio")));
+});
+
+test("interactive · state 5 meeting: Open event / Join links, Claim SF owner + Fix Attio match on a gapped/mismatched target, Log to both CRMs with the event", () => {
+  const hines = sweep([
+    src("salesforce", { ...sfDeal, owner: "Unassigned Atlanta", citations: ["001H"], facts: { ...sfDeal.facts!, domain: "hines.com", matchName: "Hines Atlanta", matchUrl: `${SF}/r/Account/001H/view`, ownerActive: false, opportunity: undefined, lists: [] } }),
+    src("attio", { ...attioDeal, citations: ["at_lsa"], facts: { ...attioDeal.facts!, domain: "hines.com", matchName: "Language Services Associates" } }),
+  ]);
+  const msg = meetingMessage("Avid / Hines — Bi-Weekly", 30, [{ target: "hines.com", res: hines }], { crms: "Salesforce + Attio", elapsedMs: 7000, writes: true }, {
+    meeting: { start: 1790000000000, url: "ical://ekevent/EV1?method=show&options=more", joinUrl: "https://zoom.us/j/1" },
+    interactive: { writes: true },
+  });
+  const b = msg.blocks as any[];
+  assert.deepEqual(buttons(b[2]), [["Open event", "ical://ekevent/EV1?method=show&options=more"], ["Join", "https://zoom.us/j/1"]]);
+  const rows = b.filter((x) => x.type === "actions").slice(1);
+  const labels = rows.flatMap(labelsOf);
+  assert.deepEqual(labels, ["SF company", "Attio company", "Log meeting", "Claim SF owner", "Fix Attio match", "Log to both CRMs"]);
+  assert.deepEqual(value(rows.find((r) => labelsOf(r).includes("Claim SF owner")), "Claim SF owner"), { op: "claim", crm: "salesforce", object: "companies", id: "001H" });
+  assert.deepEqual(value(rows.find((r) => labelsOf(r).includes("Fix Attio match")), "Fix Attio match"), { op: "attio_rematch", domain: "hines.com", id: "at_lsa", name: "Hines Atlanta", note: `Salesforce: ${SF}/r/Account/001H/view` });
+  assert.deepEqual(value(rows.find((r) => labelsOf(r).includes("Log to both CRMs")), "Log to both CRMs"), { op: "log_meeting", title: "Avid / Hines — Bi-Weekly", start: 1790000000000, targets: [{ crm: "salesforce", object: "companies", id: "001H" }, { crm: "attio", object: "companies", id: "at_lsa" }] });
+  assert.ok(rows.every((r) => els(r).length <= 5));
+  assert.match(text(b.at(-1)), /writes on/);
+});
+
+test("deal pills and the Next field: amount, close date and shape after the stage; the soonest scheduled activity linked with its owner", () => {
+  const rich: Verdict = { ...sfDeal, facts: { ...sfDeal.facts!, opportunity: { ...sfDeal.facts!.opportunity!, amount: 1250000, closeDate: "2026-12-01", detail: "45,000 SF · Office" }, nextActivity: { kind: "call", date: "2026-10-01", subject: "Renewal call", owner: "Brian Roach", url: `${SF}/r/Task/00T9/view` } } };
+  const fields = fieldsOf(sweepBlocks("cyth.com", sweep([src("salesforce", rich)]), "s") as any[]);
+  const opp = fields.find((f) => f.startsWith("*Opportunity*"))!;
+  assert.match(opp, /`Negotiation` `\$1\.3M` `closes 2026-12-01` `45,000 SF · Office`$/);
+  assert.equal(fields.find((f) => f.startsWith("*Next*")), `*Next*\n<${SF}/r/Task/00T9/view|2026-10-01> · Renewal call · Brian Roach`);
+});
+
 test("slashMessage: card + says + footer linking each CRM swept, run id when given; one-line text fallback", () => {
   const msg = slashMessage("eksretirement.com", sweep([src("salesforce", { ...cleanAttio, facts: cleanFacts() }), src("attio", attioCompany)]), { crms: "Salesforce + Attio", elapsedMs: 4100, model: "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M", runId: "c8c8a04b", runUrl: "https://valentine-lab.localhost/?run=c8c8a04b" });
   assert.equal(msg.text, ":warning: eksretirement.com — EKS Group, LLC has been in Attio since 2023-01-02 with no owner set; last email 2024-02-13.");

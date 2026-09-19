@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { loadConfig, activeCrms, type Config } from "../src/config.js";
+import { loadConfig, activeCrms, writesEnabled, type Config } from "../src/config.js";
 import { makeClient, OLLAMA_MODELS, DEFAULT_OLLAMA_HOST, type ModelClient } from "../src/models.js";
 import { sweepAll, CRM_LABELS, type SweepResult } from "../src/sweep.js";
 import { BRIEF_SYSTEM, BRIEF_SCHEMA, briefUserPrompt, acceptSummary, templateSummary, lastUsage, type Judged } from "../src/brief.js";
@@ -149,7 +149,9 @@ async function runSweep(run: Run, body: SweepBody, tag = "sweep"): Promise<Sweep
   try {
     const res = await sweepAll(client, cfg, body.target, { noModel: body.noModel, timeoutMs: body.timeoutMs, trace });
     const crmNames = activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + ");
-    const slack = slashMessage(body.target, res, { crms: crmNames, elapsedMs: res.elapsedMs, model: cfg.model, ...runLink(run) });
+    // Preview the card the way `valentine slack` would send it: with writes on, the write buttons show too.
+    const writes = writesEnabled(cfg);
+    const slack = slashMessage(body.target, res, { crms: crmNames, elapsedMs: res.elapsedMs, model: cfg.model, writes, ...runLink(run) }, { interactive: { writes } });
     emit(run, "sweep.result", {
       tag,
       target: body.target,
@@ -253,7 +255,8 @@ async function runMeeting(run: Run, body: { withinMinutes?: number; title?: stri
     }),
   );
   const cfg = loadConfig();
-  const msg = meetingMessage(title, minutes, items, { crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "), model: body.model ?? cfg.model, elapsedMs: Date.now() - t0, ...runLink(run) });
+  const writes = writesEnabled(cfg);
+  const msg = meetingMessage(title, minutes, items, { crms: activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + "), model: body.model ?? cfg.model, elapsedMs: Date.now() - t0, writes, ...runLink(run) }, writes ? { interactive: { writes } } : {});
   emit(run, "meeting.result", { title, minutes, text: msg.text, blocks: msg.blocks, elapsedMs: Date.now() - t0 });
   emit(run, "done", {});
 }

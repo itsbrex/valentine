@@ -20,6 +20,10 @@ export interface Meeting {
   start: number;
   calendar?: string;
   attendees: Attendee[];
+  /** Deep link that opens the event in the calendar app, when the source has one. */
+  url?: string;
+  /** Conferencing link (Zoom / Meet / Teams / Webex) pulled from the event. */
+  joinUrl?: string;
 }
 
 export interface CalendarSource {
