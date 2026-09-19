@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseTarget, rankMatches, hasSignal, gather } from "../src/gather.js";
-import { judge, templateSummary, templateNextStep, brief, parseJsonLoose, acceptSummary, structured, staleness, cleanName } from "../src/brief.js";
+import { judge, templateSummary, templateNextStep, brief, parseJsonLoose, acceptSummary, structured, staleness, cleanName, money, listLine } from "../src/brief.js";
 import type { CRMConnector, CRMMatch, CRMContext } from "../src/connectors/types.js";
 import type { ModelClient } from "../src/models.js";
 
@@ -116,6 +116,11 @@ test("gather: a domain searches companies first, people only when nothing matche
   const miss = fakeCrm([]);
   await gather(miss.crm, "acme.com");
   assert.deepEqual(miss.calls.map((c: any) => c.object), ["companies", "people"]);
+
+  // A personal-mail domain never identifies a company: people only.
+  const free = fakeCrm([]);
+  await gather(free.crm, "someone@gmail.com");
+  assert.deepEqual(free.calls, [{ object: "people", domain: "gmail.com" }]);
 });
 
 test("brief: clean verdicts never call the model", async () => {
@@ -282,6 +287,19 @@ test("templateNextStep: one imperative line per situation, facts only", async ()
   assert.match(templateNextStep(cold, "Salesforce"), /^Cold for \d+y \d+m — confirm Glenn still owns this before reaching out, then log the touch\.$/);
   const warm = judge(await gather(fakeCrm([match({ owner: "JP", lastEmail: "2026-09-16" })]).crm, "acme.com"), "Attio");
   assert.equal(templateNextStep(warm, "Attio"), "Check with JP before reaching out, then log the touch so the next sweep sees it.");
+  // Something already on the calendar in the CRM beats every other line.
+  const booked = judge(await gather(fakeCrm([match({ owner: "JP", lastEmail: "2026-09-16" })], { notes: [], lists: [], people: [], upcoming: [{ kind: "call", date: "2026-10-01", subject: "Renewal call", owner: "Glenn", url: "https://x/00T9" }] }).crm, "acme.com"), "Salesforce");
+  assert.equal(templateNextStep(booked, "Salesforce"), "Glenn already has a call scheduled for 2026-10-01 (Renewal call) — coordinate before reaching out.");
+  assert.deepEqual(booked.facts.nextActivity, { kind: "call", date: "2026-10-01", subject: "Renewal call", owner: "Glenn", url: "https://x/00T9" });
+});
+
+test("money / listLine: deal size, close date and shape ride along with the stage", () => {
+  assert.equal(money(1250000), "$1.3M");
+  assert.equal(money(1000000), "$1M");
+  assert.equal(money(450000), "$450K");
+  assert.equal(money(900), "$900");
+  assert.equal(listLine({ list: "Opportunity: HQ", stage: "Negotiation", amount: 1250000, closeDate: "2026-12-01", detail: "45,000 SF · Office", owner: "Brian" }), "Opportunity: HQ — Negotiation ($1.3M, closes 2026-12-01, 45,000 SF · Office, owner Brian)");
+  assert.equal(listLine({ list: "Passed" }), "Passed");
 });
 
 test("brief: the model's next_step rides the same grounding gate as the summary", async () => {

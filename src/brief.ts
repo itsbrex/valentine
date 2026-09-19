@@ -150,6 +150,7 @@ export function judge(ev: Evidence, crm: CRMConnector | string): Judged {
     lists,
     ...(opportunity ? { opportunity } : {}),
     ...(ctx?.activities?.length ? { activities: ctx.activities.slice(0, 5) } : {}),
+    ...(ctx?.upcoming?.[0] ? { nextActivity: ctx.upcoming[0] } : {}),
     notes: (ctx?.notes ?? []).slice(0, 3).map((n) => n.replace(/\s+/g, " ").trim().slice(0, 240)),
     links: linksFor(top, crmName, ev.target),
     ...(actions.length ? { actions } : {}),
@@ -193,6 +194,10 @@ export function templateNextStep(j: Judged, crmName: string): string {
   const f = j.facts;
   if (j.verdict === "clean") return `Clear to reach out — create the record in ${crmName} so the next sweep sees it.`;
   if (j.verdict === "ambiguous") return `Open the ${f.matches} matches in ${crmName} and confirm which one is them before the call.`;
+  if (f.nextActivity?.date) {
+    const who = f.nextActivity.owner ?? j.owner;
+    return `${who ? `${who} already has` : "There is already"} a ${f.nextActivity.kind} scheduled for ${f.nextActivity.date}${f.nextActivity.subject ? ` (${f.nextActivity.subject})` : ""} — coordinate before reaching out.`;
+  }
   if (f.opportunity && f.opportunity.open !== false)
     return `Log this touch to ${f.opportunity.list.replace(/^Opportunity: /, "")} so the stage history stays clean.`;
   if (j.owner && f.ownerActive === false) return `${j.owner} is a placeholder owner in ${crmName} — claim the record before reaching out.`;
@@ -236,11 +241,25 @@ export function briefUserPrompt(j: Judged, target: string, crmName: string): str
   if (f.lastEmail && j.lastTouch && !j.lastTouch.startsWith(f.lastEmail)) lines.push(`Last email: ${f.lastEmail}`);
   if (f.firstInteraction) lines.push(`First interaction: ${f.firstInteraction}`);
   if (f.connectionStrength) lines.push(`Connection strength: ${f.connectionStrength}`);
-  if (f.lists.length)
-    lines.push(`Lists / pipeline: ${f.lists.map((l) => (l.stage ? `${l.list} — ${l.stage}` : l.list)).join("; ")}`);
+  if (f.lists.length) lines.push(`Lists / pipeline: ${f.lists.map(listLine).join("; ")}`);
+  if (f.nextActivity?.date)
+    lines.push(`Already scheduled: ${f.nextActivity.kind} on ${f.nextActivity.date}${f.nextActivity.subject ? ` — ${f.nextActivity.subject}` : ""}${f.nextActivity.owner ? ` (${f.nextActivity.owner})` : ""}`);
   if (f.people.length) lines.push(`Their people in the CRM: ${f.people.join(", ")}`);
   if (f.notes.length) lines.push(`Notes: ${f.notes.map((n) => JSON.stringify(n)).join(" ")}`);
   return lines.join("\n");
+}
+
+/** "Opportunity: Acme HQ — Negotiation ($1.2M, closes 2026-12-01, 45,000 SF · Office)". */
+export function listLine(l: ListMembership): string {
+  const extras = [l.amount != null ? money(l.amount) : undefined, l.closeDate ? `closes ${l.closeDate}` : undefined, l.detail, l.owner ? `owner ${l.owner}` : undefined].filter(Boolean);
+  return `${l.list}${l.stage ? ` — ${l.stage}` : ""}${extras.length ? ` (${extras.join(", ")})` : ""}`;
+}
+
+/** 1234567 → "$1.2M"; 450000 → "$450K"; 900 → "$900". */
+export function money(n: number): string {
+  const abs = Math.abs(n);
+  const s = abs >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : abs >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : abs >= 1e3 ? `${Math.round(n / 1e3)}K` : `${Math.round(n)}`;
+  return `$${s.replace(/\.0(?=[MB])/, "")}`;
 }
 
 /** Pull a JSON object out of model text that may carry fences or prose. */
@@ -292,7 +311,8 @@ export function acceptSummary(s: unknown, j?: Judged): string | undefined {
   if (/^\{|\bnull\b|undefined/.test(t)) return undefined;
   if (!j) return t;
   if (!j.owner && /\b(own(s|ed|er|ership)?|handl(es|ed|ing))\b/i.test(t)) return undefined;
-  const known = [j.owner, j.lastTouch, j.status, j.facts.matchName, j.facts.firstInteraction, j.facts.lastEmail, j.facts.lastMeeting, j.facts.stale, ...j.facts.people, ...j.facts.lists.flatMap((l) => [l.list, l.stage]), ...j.facts.notes]
+  const next = j.facts.nextActivity;
+  const known = [j.owner, j.lastTouch, j.status, j.facts.matchName, j.facts.firstInteraction, j.facts.lastEmail, j.facts.lastMeeting, j.facts.stale, ...j.facts.people, ...j.facts.lists.flatMap((l) => [listLine(l), l.owner]), next?.date, next?.subject, next?.owner, ...j.facts.notes]
     .filter((x): x is string => !!x)
     .join(" ");
   for (const date of t.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []) if (!known.includes(date)) return undefined;

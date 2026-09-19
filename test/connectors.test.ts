@@ -289,7 +289,7 @@ test("Salesforce: getContext folds Notes + Task subjects, Opportunities, Contact
       return { records: [{ Title: "Verdict", Body: "passed, too early" }] };
     if (q.startsWith("SELECT Subject, Description FROM Task"))
       return { records: [{ Subject: "Call w/ founder", Description: "not now" }] };
-    if (q.startsWith("SELECT Id, Name, StageName, IsClosed FROM Opportunity"))
+    if (q.includes("FROM Opportunity"))
       return { records: [{ Id: "006A", Name: "Acme Seed", StageName: "Closed Lost", IsClosed: true }] };
     if (q.startsWith("SELECT Id, Name FROM Contact"))
       return { records: [{ Id: "003J", Name: "Jane Founder" }] };
@@ -312,7 +312,86 @@ test("Salesforce: getContext folds Notes + Task subjects, Opportunities, Contact
     activities: [{ id: "00T1", date: "2026-05-12", kind: "email", subject: "Email: intro", url: `${SF}/Task/00T1/view` }],
   });
   const soqls = calls.map((c) => soqlOf(c.url));
-  assert.ok(soqls.some((q) => /FROM Account WHERE Id = '001A'/.test(q) && /SELECT Id, Subject, ActivityDate, ActivityType, IsTask FROM ActivityHistories ORDER BY ActivityDate DESC NULLS LAST LIMIT 5/.test(q)));
+  // the exact ORDER BY non-admin users are allowed (live-verified: `NULLS LAST` is a MALFORMED_QUERY)
+  assert.ok(soqls.some((q) => /FROM Account WHERE Id = '001A'/.test(q) && /SELECT Id, Subject, ActivityDate, ActivityType, IsTask FROM ActivityHistories ORDER BY ActivityDate DESC, LastModifiedDate DESC LIMIT 5/.test(q)));
+  // the first opportunity query probes the CRE deal-shape fields
+  assert.ok(soqls.some((q) => /Amount, CloseDate, Probability, Type, Owner\.Name, Size__c, Size_Type__c, Term_Months__c, Lease_Type__c FROM Opportunity/.test(q)));
+});
+
+test("Salesforce: opportunity fields probe — INVALID_FIELD drops the custom set, then the standard one; amount/close/detail ride along; the tier is remembered", async () => {
+  let n = 0;
+  mockFetch((url) => {
+    const q = soqlOf(url);
+    if (q.includes("FROM Opportunity")) {
+      n++;
+      if (/Size__c/.test(q)) return new Response(JSON.stringify([{ errorCode: "INVALID_FIELD", message: "No such column 'Size__c' on entity 'Opportunity'" }]), { status: 400 });
+      return { records: [{ Id: "006B", Name: "Cyth Expansion", StageName: "Negotiation", IsClosed: false, Amount: 1250000, CloseDate: "2026-12-01", Type: "Renewal", Owner: { Name: "Brian Roach" } }] };
+    }
+    return { records: [] };
+  });
+  const conn = new SalesforceConnector("tok", "https://org.my.salesforce.com");
+  const ctx = await conn.getContext("companies", "001B");
+  assert.deepEqual(ctx.lists, [{
+    list: "Opportunity: Cyth Expansion", stage: "Negotiation", kind: "opportunity", id: "006B",
+    url: "https://org.my.salesforce.com/lightning/r/Opportunity/006B/view", open: true,
+    amount: 1250000, closeDate: "2026-12-01", owner: "Brian Roach", detail: "Renewal",
+  }]);
+  assert.equal(n, 2); // custom probe failed once, standard succeeded
+  await conn.getContext("companies", "001B");
+  assert.equal(n, 3); // second call goes straight to the standard tier
+});
+
+test("Salesforce: the deal-shape custom fields become a detail line when the org has them", async () => {
+  mockFetch((url) => (soqlOf(url).includes("FROM Opportunity")
+    ? { records: [{ Id: "006C", Name: "HQ Lease", StageName: "Proposal", IsClosed: false, Size__c: 45000, Size_Type__c: "SF", Term_Months__c: 60, Lease_Type__c: "Office", Type: "New Business" }] }
+    : { records: [] }));
+  const ctx = await new SalesforceConnector("tok", "https://org.my.salesforce.com").getContext("companies", "001C");
+  assert.equal(ctx.lists[0].detail, "45,000 SF · Office · 60 mo · New Business");
+});
+
+test("Salesforce: OpenActivities come back as `upcoming`, soonest first, with owner and status", async () => {
+  mockFetch((url) => {
+    const q = soqlOf(url);
+    if (q.includes("FROM ActivityHistories"))
+      return { records: [{ Id: "001A", ActivityHistories: { records: [] }, OpenActivities: { records: [
+        { Id: "00T9", Subject: "Call re: renewal", ActivityDate: "2026-10-01", ActivityType: "Call", IsTask: true, Status: "Not Started", Owner: { Name: "Glenn Friedrich" } },
+        { Id: "00U2", Subject: "Site tour", ActivityDate: "2026-10-15", IsTask: false },
+      ] } }] };
+    return { records: [] };
+  });
+  const ctx = await new SalesforceConnector("tok", "https://org.my.salesforce.com").getContext("companies", "001A");
+  assert.equal(ctx.activities, undefined);
+  assert.deepEqual(ctx.upcoming, [
+    { id: "00T9", date: "2026-10-01", kind: "call", subject: "Call re: renewal", url: "https://org.my.salesforce.com/lightning/r/Task/00T9/view", owner: "Glenn Friedrich", status: "Not Started" },
+    { id: "00U2", date: "2026-10-15", kind: "event", subject: "Site tour", url: "https://org.my.salesforce.com/lightning/r/Event/00U2/view" },
+  ]);
+  assert.ok(calls.some((c) => /FROM OpenActivities ORDER BY ActivityDate ASC, LastModifiedDate DESC LIMIT 5/.test(soqlOf(c.url))));
+});
+
+test("Salesforce: people search also returns unconverted Leads, marked as such, with Lead deep links", async () => {
+  mockFetch((url) => {
+    const q = soqlOf(url);
+    if (q.startsWith("SELECT Id, Name, Email, AccountId")) return { records: [] };
+    if (q.includes("FROM Lead"))
+      return { records: [{ Id: "00Q1", Name: "Pat Prospect", Company: "Acme", Email: "pat@acme.com", Website: "acme.com", Status: "Open", OwnerId: "005X", Owner: { Name: "Sam Rep", IsActive: true }, LastActivityDate: "2026-08-01" }] };
+    return { records: [] };
+  });
+  const out = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "people", domain: "acme.com" });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].recordType, "Lead");
+  assert.equal(out[0].url, "https://org.my.salesforce.com/lightning/r/Lead/00Q1/view");
+  assert.equal(out[0].domain, "acme.com");
+  assert.equal(out[0].owner, "Sam Rep");
+  const lead = calls.map((c) => soqlOf(c.url)).find((q) => q.includes("FROM Lead"))!;
+  assert.match(lead, /IsConverted = false AND \(Email LIKE '%@acme\.com' OR Website LIKE '%acme\.com%'\)/);
+});
+
+test("Salesforce: a restricted Lead object costs nothing — Contacts still come back", async () => {
+  mockFetch((url) => (soqlOf(url).includes("FROM Lead")
+    ? new Response(JSON.stringify([{ errorCode: "INVALID_TYPE", message: "sObject type 'Lead' is not supported." }]), { status: 400 })
+    : { records: [{ Id: "003Z", Name: "Zed Contact", Email: "z@acme.com" }] }));
+  const out = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "people", domain: "acme.com" });
+  assert.deepEqual(out.map((m) => m.recordId), ["003Z"]);
 });
 
 test("Salesforce: getContext on a Contact links each CampaignMember to its Campaign", async () => {
@@ -348,8 +427,8 @@ test("Salesforce: sid command mints the token lazily and reuses it across calls"
   const sid = countingSidCommand();
   mockFetch(() => ({ records: [] }));
   const conn = new SalesforceConnector({ command: sid.cmd }, "https://org.my.salesforce.com");
-  await conn.search({ object: "people", name: "Ann" });
-  await conn.search({ object: "people", name: "Bob" });
+  await conn.search({ object: "companies", name: "Ann" });
+  await conn.search({ object: "companies", name: "Bob" });
   const auths = calls.map((c) => (c.init?.headers as Record<string, string>).Authorization);
   assert.deepEqual(auths, ["Bearer tok1", "Bearer tok1"]); // one mint, reused
   assert.equal(sid.runs(), 1);
@@ -358,14 +437,14 @@ test("Salesforce: sid command mints the token lazily and reuses it across calls"
 test("Salesforce: a 401 re-runs the sid command once and retries the query", async () => {
   const sid = countingSidCommand();
   let hits = 0;
-  mockFetch(() => (++hits === 1
+  mockFetch((url) => (++hits === 1
     ? new Response("Session expired or invalid", { status: 401 })
-    : { records: [{ Id: "003X", Name: "Jane Founder" }] }));
+    : soqlOf(url).includes("FROM Lead") ? { records: [] } : { records: [{ Id: "003X", Name: "Jane Founder" }] }));
   const conn = new SalesforceConnector({ command: sid.cmd }, "https://org.my.salesforce.com");
   const out = await conn.search({ object: "people", name: "Jane" });
   assert.equal(out.length, 1); // retry succeeded — no degrade-to-empty
   const auths = calls.map((c) => (c.init?.headers as Record<string, string>).Authorization);
-  assert.deepEqual(auths, ["Bearer tok1", "Bearer tok2"]); // fresh token on retry
+  assert.deepEqual(auths.slice(0, 2), ["Bearer tok1", "Bearer tok2"]); // fresh token on retry
   assert.equal(sid.runs(), 2);
 });
 

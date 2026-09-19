@@ -11,6 +11,9 @@
 export interface CRMMatch {
   recordId: string;
   object: "companies" | "people";
+  /** The CRM's own record type when it matters — "Lead" for a Salesforce Lead
+   *  (a person + company in one record, not yet a Contact). */
+  recordType?: string;
   name?: string;
   domain?: string;
   /** Relationship owner (resolved member name), if any. */
@@ -67,6 +70,10 @@ export interface Activity {
   kind: string;
   subject?: string;
   url?: string;
+  /** Who it is assigned to (an upcoming task's owner). */
+  owner?: string;
+  /** Open activities only: "Not Started", "In Progress"… */
+  status?: string;
 }
 
 /** A list / pipeline / campaign membership. */
@@ -82,6 +89,12 @@ export interface ListMembership {
   /** Opportunity only: false once closed (won or lost). */
   open?: boolean;
   id?: string;
+  /** Opportunity only: deal size, close date, owner, and any deal-shape
+   *  detail the org's custom fields carry ("45,000 SF · Office · 60 mo"). */
+  amount?: number;
+  closeDate?: string;
+  owner?: string;
+  detail?: string;
 }
 
 /** Everything else attached to a record — the "look across as much as possible" sweep. */
@@ -96,6 +109,8 @@ export interface CRMContext {
   peopleLinks?: RecordLink[];
   /** Most recent logged activities, newest first. */
   activities?: Activity[];
+  /** Scheduled / open activities, soonest first — someone is already on it. */
+  upcoming?: Activity[];
 }
 
 /** Prefill for a new-record form. Only what the CRM can take on its URL. */
@@ -197,6 +212,9 @@ export interface BriefFacts {
   opportunity?: ListMembership;
   /** Most recent logged activities, newest first. */
   activities?: Activity[];
+  /** The soonest scheduled activity on the record, if any — a colleague is
+   *  already on it; the card and next step say so. */
+  nextActivity?: Activity;
   /** Most recent note bodies, trimmed. */
   notes: string[];
   /** Click-to-act: the record, the company site, a LinkedIn search. */

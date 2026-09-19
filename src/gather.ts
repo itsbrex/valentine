@@ -7,6 +7,16 @@
 
 import type { CRMConnector, CRMMatch, CRMContext } from "./connectors/types.js";
 
+/** Personal-mail domains — a company sweep of gmail.com is meaningless, so a
+ *  freemail target only looks for people. Same list the sf-ownership-desk
+ *  uses (plus the newer providers). */
+export const FREEMAIL = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+  "msn.com", "yahoo.com", "ymail.com", "icloud.com", "me.com", "mac.com", "aol.com",
+  "proton.me", "protonmail.com", "pm.me", "hey.com", "fastmail.com",
+  "comcast.net", "sbcglobal.net", "att.net", "verizon.net", "pacbell.net", "cox.net",
+]);
+
 export type TargetKind = "domain" | "name";
 
 export interface Target {
@@ -128,7 +138,8 @@ export async function gather(
 
   let found: CRMMatch[];
   if (target.kind === "domain") {
-    found = await search("companies");
+    // A personal-mail domain never identifies a company: people only.
+    found = FREEMAIL.has(target.value) ? [] : await search("companies");
     // No company record → maybe a contact with that email domain (Salesforce
     // Contact.Email, Affinity persons). Connectors that can't filter people by
     // domain return [] without throwing.

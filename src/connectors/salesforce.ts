@@ -1,10 +1,15 @@
 // Salesforce connector — READ-ONLY, data-model-agnostic.
 // Relies only on STANDARD objects present on every org:
-//   - Account / Contact search via SOQL (Name, Website, Owner, LastActivityDate)
+//   - Account / Contact / Lead search via SOQL (Name, Website, Email, Owner, LastActivityDate)
 //   - Note bodies + Task subjects for outcomes ("passed, too early")
-//   - Opportunities (Account) and Campaigns (Contact) as list/pipeline signals
-//   - ActivityHistory (the Task/Event behind "last touched") for deep links
-// Anything custom or missing is skipped gracefully — never assumed.
+//   - Opportunities (Account) and Campaigns (Contact) as list/pipeline signals,
+//     with Amount / CloseDate / Owner when the user can see them
+//   - ActivityHistory (the Task/Event behind "last touched") and OpenActivities
+//     (what is already scheduled — soonest first) for deep links
+// Anything custom or missing is skipped gracefully — never assumed. The one
+// exception is a PROBE: opportunity queries try the CRE deal-shape fields the
+// sf-ownership-desk uses (Size__c, Size_Type__c, Term_Months__c, Lease_Type__c)
+// and fall back to standard-only, then to the bare query, on INVALID_FIELD.
 //
 // Auth: a REST access token + instance URL. Get one from a read-only user via a
 // connected app, or locally: `sf org display --json` → accessToken/instanceUrl.
@@ -92,7 +97,16 @@ export class SalesforceSession {
     }
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Salesforce ${res.status} on ${method} ${path.split("?")[0]}: ${text.slice(0, 200)}`);
+      // Lead with the errorCode: the body echoes the whole SOQL first, so a
+      // 200-char slice alone can hide INVALID_FIELD / INVALID_TYPE.
+      let code = "";
+      try {
+        const c = JSON.parse(text)?.[0]?.errorCode;
+        if (typeof c === "string") code = ` ${c}`;
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(`Salesforce ${res.status}${code} on ${method} ${path.split("?")[0]}: ${text.slice(0, 200)}`);
     }
     if (res.status === 204) return undefined;
     return res.json();
@@ -162,13 +176,14 @@ export class SalesforceConnector implements CRMConnector {
         }));
       }
 
-      // "people" → Contact. By name, or by email domain when a domain is given.
+      // "people" → Contact, plus unconverted Leads. By name, or by email
+      // domain when a domain is given.
       const where = q.domain ? `Email LIKE '%@${term}'` : `Name LIKE '%${term}%'`;
       const recs = await this.soql(
         `SELECT Id, Name, Email, AccountId, Account.Name, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate ` +
           `FROM Contact WHERE ${where} LIMIT 10`,
       );
-      return recs.map((r) => ({
+      const contacts: CRMMatch[] = recs.map((r) => ({
         recordId: r.Id,
         object: "people" as const,
         name: r.Name ?? undefined,
@@ -181,9 +196,38 @@ export class SalesforceConnector implements CRMConnector {
           : {}),
         views: { activity: this.relatedUrl("Contact", r.Id, "ActivityHistories") },
       }));
+      return [...contacts, ...(await this.leads(q, term))];
     } catch (e) {
       if (e instanceof SalesforceAuthError) throw e;
       return []; // restricted object/field for this user → no match, never crash
+    }
+  }
+
+  /** Unconverted Leads — a prospect someone already logged but never turned
+   *  into an Account/Contact. Its own try: Lead is often restricted. */
+  private async leads(q: SearchQuery, term: string): Promise<CRMMatch[]> {
+    try {
+      const where = q.domain
+        ? `(Email LIKE '%@${term}' OR Website LIKE '%${term}%')`
+        : `(Name LIKE '%${term}%' OR Company LIKE '%${term}%')`;
+      const recs = await this.soql(
+        `SELECT Id, Name, Company, Email, Website, Status, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate ` +
+          `FROM Lead WHERE IsConverted = false AND ${where} LIMIT 10`,
+      );
+      return recs.map((r) => ({
+        recordId: r.Id,
+        object: "people" as const,
+        recordType: "Lead",
+        name: r.Name ?? undefined,
+        domain: r.Email?.split("@")[1] ?? hostname(r.Website),
+        ...this.ownerOf(r),
+        lastInteraction: r.LastActivityDate ? `activity · ${r.LastActivityDate}` : undefined,
+        url: this.recordUrl("Lead", r.Id),
+        views: { activity: this.relatedUrl("Lead", r.Id, "ActivityHistories") },
+      }));
+    } catch (e) {
+      if (e instanceof SalesforceAuthError) throw e;
+      return [];
     }
   }
 
@@ -248,7 +292,7 @@ export class SalesforceConnector implements CRMConnector {
 
   async getContext(object: "companies" | "people", id: string): Promise<CRMContext> {
     const sid = soqlEscape(id);
-    const [notes, lists, people, activities] = await Promise.all([
+    const [notes, lists, people, acts] = await Promise.all([
       this.notes(object, sid),
       this.lists(object, sid),
       this.people(object, sid),
@@ -259,7 +303,8 @@ export class SalesforceConnector implements CRMConnector {
       lists,
       people: people.map((p) => p.label),
       ...(people.length ? { peopleLinks: people } : {}),
-      ...(activities.length ? { activities } : {}),
+      ...(acts.recent.length ? { activities: acts.recent } : {}),
+      ...(acts.upcoming.length ? { upcoming: acts.upcoming } : {}),
     };
   }
 
@@ -288,11 +333,20 @@ export class SalesforceConnector implements CRMConnector {
     return out.slice(0, 25);
   }
 
-  private async lists(object: "companies" | "people", id: string): Promise<ListMembership[]> {
-    try {
-      if (object === "companies") {
+  /** Which opportunity field set this org/user can see: probed once, then
+   *  remembered. 0 = with CRE custom fields · 1 = standard deal fields · 2 = bare. */
+  private oppTier = 0;
+
+  private async opportunities(accountId: string): Promise<ListMembership[]> {
+    const tiers = [
+      `${OPP_STANDARD}, ${OPP_CUSTOM.join(", ")}`,
+      OPP_STANDARD,
+      "Id, Name, StageName, IsClosed",
+    ];
+    for (; this.oppTier < tiers.length; this.oppTier++) {
+      try {
         const opps = await this.soql(
-          `SELECT Id, Name, StageName, IsClosed FROM Opportunity WHERE AccountId = '${id}' ORDER BY CreatedDate DESC LIMIT 10`,
+          `SELECT ${tiers[this.oppTier]} FROM Opportunity WHERE AccountId = '${accountId}' ORDER BY CreatedDate DESC LIMIT 10`,
         );
         return opps.map((o) => ({
           list: `Opportunity: ${o.Name}`,
@@ -301,8 +355,24 @@ export class SalesforceConnector implements CRMConnector {
           id: o.Id,
           url: this.recordUrl("Opportunity", o.Id),
           open: o.IsClosed == null ? undefined : !o.IsClosed,
+          ...(typeof o.Amount === "number" ? { amount: o.Amount } : {}),
+          ...(o.CloseDate ? { closeDate: o.CloseDate } : {}),
+          ...(o.Owner?.Name ? { owner: o.Owner.Name } : {}),
+          ...(dealDetail(o) ? { detail: dealDetail(o) } : {}),
         }));
+      } catch (e) {
+        if (e instanceof SalesforceAuthError) throw e;
+        // INVALID_FIELD / no FLS on a field → drop to the next tier and retry;
+        // anything else (no Opportunity access at all) → no lists.
+        if (!/INVALID_FIELD|No such column|FIELD_INTEGRITY/i.test(String((e as Error)?.message))) return [];
       }
+    }
+    return [];
+  }
+
+  private async lists(object: "companies" | "people", id: string): Promise<ListMembership[]> {
+    try {
+      if (object === "companies") return await this.opportunities(id);
       const camps = await this.soql(
         `SELECT Id, CampaignId, Campaign.Name, Status FROM CampaignMember WHERE ContactId = '${id}' LIMIT 10`,
       );
@@ -329,27 +399,56 @@ export class SalesforceConnector implements CRMConnector {
     }
   }
 
-  /** The Task/Event behind "last touched", via the ActivityHistories subquery
-   *  (ActivityHistory cannot be queried directly). Newest first. */
-  private async activities(object: "companies" | "people", id: string): Promise<Activity[]> {
-    const sobject = object === "companies" ? "Account" : "Contact";
+  /** The Task/Event behind "last touched" (ActivityHistories, newest first)
+   *  and what is already scheduled (OpenActivities, SOONEST first — the
+   *  ownership desk's "next task" picked the latest due date by mistake).
+   *  Both are subqueries: neither object can be queried directly, and for
+   *  non-admin users Salesforce demands EXACTLY these ORDER BY clauses
+   *  (`ActivityDate DESC, LastModifiedDate DESC` / `ActivityDate ASC,
+   *  LastModifiedDate DESC`) — anything else, even `NULLS LAST`, is a
+   *  MALFORMED_QUERY "implementation restriction". Live-verified 2026-09-18. */
+  private async activities(object: "companies" | "people", id: string): Promise<{ recent: Activity[]; upcoming: Activity[] }> {
+    const sobject = object === "companies" ? "Account" : /^00Q/.test(id) ? "Lead" : "Contact";
+    const map = (a: any): Activity => ({
+      id: a.Id,
+      date: a.ActivityDate ?? undefined,
+      kind: (a.ActivityType ?? (a.IsTask ? "task" : "event")).toLowerCase(),
+      subject: a.Subject ?? undefined,
+      url: this.recordUrl(a.IsTask === false ? "Event" : "Task", a.Id),
+      ...(a.Owner?.Name ? { owner: a.Owner.Name } : {}),
+      ...(a.Status ? { status: a.Status } : {}),
+    });
     try {
       const recs = await this.soql(
         `SELECT Id, (SELECT Id, Subject, ActivityDate, ActivityType, IsTask FROM ActivityHistories ` +
-          `ORDER BY ActivityDate DESC NULLS LAST LIMIT 5) FROM ${sobject} WHERE Id = '${id}'`,
+          `ORDER BY ActivityDate DESC, LastModifiedDate DESC LIMIT 5), ` +
+          `(SELECT Id, Subject, ActivityDate, ActivityType, IsTask, Status, Owner.Name FROM OpenActivities ` +
+          `ORDER BY ActivityDate ASC, LastModifiedDate DESC LIMIT 5) FROM ${sobject} WHERE Id = '${id}'`,
       );
-      const rows: any[] = recs[0]?.ActivityHistories?.records ?? [];
-      return rows.map((a) => ({
-        id: a.Id,
-        date: a.ActivityDate ?? undefined,
-        kind: (a.ActivityType ?? (a.IsTask ? "task" : "event")).toLowerCase(),
-        subject: a.Subject ?? undefined,
-        url: this.recordUrl(a.IsTask === false ? "Event" : "Task", a.Id),
-      }));
+      return {
+        recent: (recs[0]?.ActivityHistories?.records ?? []).map(map),
+        upcoming: (recs[0]?.OpenActivities?.records ?? []).map(map),
+      };
     } catch {
-      return [];
+      return { recent: [], upcoming: [] };
     }
   }
+}
+
+// --- opportunity field sets (see the probe note at the top) ---
+const OPP_STANDARD = "Id, Name, StageName, IsClosed, Amount, CloseDate, Probability, Type, Owner.Name";
+/** CRE deal-shape fields from the sf-ownership-desk org. Dropped wholesale when absent. */
+const OPP_CUSTOM = ["Size__c", "Size_Type__c", "Term_Months__c", "Lease_Type__c"];
+
+/** "45,000 SF · Office · 60 mo · Renewal" from whatever deal-shape fields came back. */
+function dealDetail(o: any): string | undefined {
+  const bits: string[] = [];
+  // Zero means "not filled in", not a zero-size deal — live-verified 2026-09-18.
+  if (typeof o.Size__c === "number" && o.Size__c > 0) bits.push(`${o.Size__c.toLocaleString("en-US")}${o.Size_Type__c ? ` ${o.Size_Type__c}` : " SF"}`);
+  if (o.Lease_Type__c) bits.push(String(o.Lease_Type__c));
+  if (typeof o.Term_Months__c === "number" && o.Term_Months__c > 0) bits.push(`${o.Term_Months__c} mo`);
+  if (o.Type) bits.push(String(o.Type));
+  return bits.length ? bits.join(" · ") : undefined;
 }
 
 // --- value extractors ---

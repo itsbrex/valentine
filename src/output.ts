@@ -8,6 +8,7 @@
 import pc from "picocolors";
 import type { Verdict, RecordLink } from "./connectors/types.js";
 import { CRM_LABELS, type SweepResult } from "./sweep.js";
+import { listLine } from "./brief.js";
 
 export function exitCodeFor(v: Verdict): number {
   if (v.verdict === "clean") return 0;
@@ -48,6 +49,10 @@ export function renderVerdict(v: Verdict): string {
     if (f.firstInteraction) extra.push(`First contact: ${f.firstInteraction}`);
     if (f.people.length) extra.push(`Contacts: ${f.people.slice(0, 4).join(", ")}${f.people.length > 4 ? ` +${f.people.length - 4}` : ""}`);
     if (extra.length) lines.push(pc.dim(extra.join(" · ")));
+    if (f.opportunity && (f.opportunity.amount != null || f.opportunity.closeDate || f.opportunity.detail))
+      lines.push(pc.dim(`Deal: ${listLine(f.opportunity).replace(/^Opportunity: /, "")}`));
+    if (f.nextActivity?.date)
+      lines.push(pc.dim(`Next: ${f.nextActivity.kind} ${f.nextActivity.date}${f.nextActivity.subject ? ` — ${f.nextActivity.subject}` : ""}${f.nextActivity.owner ? ` (${f.nextActivity.owner})` : ""}`));
     if (f.lists.length && !v.status)
       lines.push(pc.dim(`Lists: ${f.lists.map((l) => (l.stage ? `${l.list} (${l.stage})` : l.list)).join(", ")}`));
     if (f.notes[0] && v.verdict === "prior_contact") lines.push(pc.dim(`Note: ${f.notes[0].slice(0, 120)}${f.notes[0].length > 120 ? "…" : ""}`));
