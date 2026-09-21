@@ -139,6 +139,62 @@ would post it. Four scenarios:
 The "Which model, when" panel explains the trade-offs. Timings shown are
 measured on your machine, not simulated.
 
+## Always-on: the Slack endpoint behind a tunnel
+
+Slack needs a public HTTPS URL it can POST to, and it needs the same one
+tomorrow — so the `/valentine` slash command and the card's buttons run as two
+launchd agents on macOS: `valentine slack` on localhost, and a **named**
+Cloudflare tunnel in front of it. Named, not a quick tunnel: the hostname is
+yours and survives restarts, so you set the Slack URLs once.
+
+**1. Create the tunnel and its DNS record — once.**
+
+```bash
+brew install cloudflared
+cloudflared tunnel login                     # pick the zone in the browser
+cloudflared tunnel create valentine          # prints <UUID>, writes ~/.cloudflared/<UUID>.json
+cloudflared tunnel route dns valentine valentine.example.com   # the CNAME → <UUID>.cfargotunnel.com
+```
+
+**2. Point it at the local server** in `~/.cloudflared/config.yml` (port =
+`VALENTINE_SLACK_PORT`, default 3141):
+
+```yaml
+tunnel: <UUID>
+credentials-file: /Users/you/.cloudflared/<UUID>.json
+ingress:
+  - hostname: valentine.example.com
+    service: http://localhost:3141
+  - service: http_status:404
+```
+
+**3. Install both agents** — `com.valentine.slack` and
+`com.valentine.cloudflared`, `KeepAlive` + `RunAtLoad`, logging to
+`~/.valentine/slack.log` and `~/.valentine/cloudflared.log`:
+
+```bash
+scripts/install-slack-launchd.sh            # or: … 8080  to use another port
+scripts/install-slack-launchd.sh --print    # show the plists, install nothing
+scripts/install-slack-launchd.sh --uninstall
+```
+
+Same shape as the watch daemon (`scripts/install-launchd.sh`): the plists call
+a wrapper — `scripts/slack-launchd.sh` — that sources `.env` and puts the mise
+shims and Homebrew on `PATH`, because a launchd agent gets neither your shell
+profile nor a `node` on its bare `PATH`. Secrets stay in `.env`
+(`VALENTINE_SLACK_SIGNING_SECRET`); nothing is copied into the plist.
+
+**4. Give Slack the hostname.** In your Slack app,
+`https://valentine.example.com/` goes in **both** the slash command's *Request
+URL* and **Interactivity & Shortcuts → Request URL** — one server answers both
+(any path; it replies to every POST). Writes stay off until you opt in with
+`VALENTINE_WRITES=1`.
+
+```bash
+launchctl print gui/$UID/com.valentine.slack | head    # status
+tail -f ~/.valentine/slack.log ~/.valentine/cloudflared.log
+```
+
 ## Your keys, your data
 
 Runs with your CRM token, on your machine. Nothing leaves the fund. Keys are
