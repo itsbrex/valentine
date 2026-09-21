@@ -138,6 +138,8 @@ export function judge(ev: Evidence, crm: CRMConnector | string): Judged {
     matches: ev.matches.length,
     ownerUrl: top?.ownerUrl,
     ownerActive: top?.ownerActive,
+    contact: top?.contact,
+    firmographics: top?.firmographics,
     connectionStrength: top?.connectionStrength,
     firstInteraction: top?.firstInteraction,
     lastEmail: top?.lastEmail,

@@ -156,11 +156,8 @@ export class SalesforceConnector implements CRMConnector {
     try {
       if (q.object === "companies") {
         const where = q.domain ? `Website LIKE '%${term}%'` : `Name LIKE '%${term}%'`;
-        const recs = await this.soql(
-          `SELECT Id, Name, Website, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate, ` +
-            `(SELECT Id FROM Contacts LIMIT 6) FROM Account WHERE ${where} LIMIT 10`,
-        );
-        return recs.map((r) => ({
+        const recs = await this.accounts(where);
+        const all: CRMMatch[] = recs.map((r) => ({
           recordId: r.Id,
           object: "companies" as const,
           name: r.Name ?? undefined,
@@ -169,11 +166,13 @@ export class SalesforceConnector implements CRMConnector {
           lastInteraction: r.LastActivityDate ? `activity · ${r.LastActivityDate}` : undefined,
           linkedPeople: r.Contacts?.records?.length ?? undefined,
           url: this.recordUrl("Account", r.Id),
+          ...(firmographics(r) ? { firmographics: firmographics(r) } : {}),
           views: {
             activity: this.relatedUrl("Account", r.Id, "ActivityHistories"),
             people: this.relatedUrl("Account", r.Id, "Contacts"),
           },
         }));
+        return q.domain ? domainRelated(all, q.domain) : all;
       }
 
       // "people" → Contact, plus unconverted Leads. By name, or by email
@@ -333,6 +332,26 @@ export class SalesforceConnector implements CRMConnector {
     return out.slice(0, 25);
   }
 
+  /** Which Account field set this org/user can see: probed once, then
+   *  remembered. 0 = with ZoomInfo firmographics · 1 = standard · 2 = bare.
+   *  Same shape as the opportunity probe below — an org without the ZoomInfo
+   *  managed package answers INVALID_FIELD once and never pays for it again. */
+  private acctTier = 0;
+
+  private async accounts(where: string): Promise<any[]> {
+    const tail = `, (SELECT Id FROM Contacts LIMIT 6) FROM Account WHERE ${where} LIMIT 10`;
+    const tiers = [`${ACCT_STANDARD}, ${ACCT_FIRMO.join(", ")}`, ACCT_STANDARD, ACCT_BARE];
+    for (; this.acctTier < tiers.length; this.acctTier++) {
+      try {
+        return await this.soql(`SELECT ${tiers[this.acctTier]}${tail}`);
+      } catch (e) {
+        if (e instanceof SalesforceAuthError) throw e;
+        if (!/INVALID_FIELD|No such column|FIELD_INTEGRITY/i.test(String((e as Error)?.message))) throw e;
+      }
+    }
+    return [];
+  }
+
   /** Which opportunity field set this org/user can see: probed once, then
    *  remembered. 0 = with CRE custom fields · 1 = standard deal fields · 2 = bare. */
   private oppTier = 0;
@@ -433,6 +452,65 @@ export class SalesforceConnector implements CRMConnector {
       return { recent: [], upcoming: [] };
     }
   }
+}
+
+// --- account field sets (see the acctTier probe note) ---
+const ACCT_BARE = "Id, Name, Website, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate";
+const ACCT_STANDARD = `${ACCT_BARE}, NumberOfEmployees, AnnualRevenue, Industry`;
+/** ZoomInfo managed-package enrichment, live-verified on the cresa org
+ *  2026-09-21. Dropped wholesale when the package is not installed. */
+const ACCT_FIRMO = ["ZoomInfo_Employees__c", "ZoomInfo_Annual_Revenue__c", "ZoomInfo_Primary_Industry__c"];
+
+/** "1,200 employees · $340M · Commercial Real Estate" — the org's own fields
+ *  first, ZoomInfo's only where the org has nothing. Zero means "not filled
+ *  in", never a zero-employee company (same rule as dealDetail). */
+function firmographics(r: any): string | undefined {
+  const num = (x: unknown) => (typeof x === "number" && x > 0 ? x : undefined);
+  const employees = num(r.NumberOfEmployees) ?? num(r.ZoomInfo_Employees__c);
+  const revenue = num(r.AnnualRevenue) ?? num(r.ZoomInfo_Annual_Revenue__c);
+  const industry = r.Industry || r.ZoomInfo_Primary_Industry__c || undefined;
+  const bits: string[] = [];
+  if (employees) bits.push(`${Math.round(employees).toLocaleString("en-US")} employees`);
+  if (revenue) bits.push(money(revenue));
+  if (industry) bits.push(String(industry));
+  return bits.length ? bits.join(" · ") : undefined;
+}
+
+/** $1.25M / $340K / $900 — compact enough for a Slack field. */
+function money(n: number): string {
+  if (n >= 1e9) return `$${+(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `$${+(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${Math.round(n / 1e3)}K`;
+  return `$${n}`;
+}
+
+/** `Website LIKE '%hines.com%'` also matches machines.com. Keep only accounts
+ *  whose website host IS the domain or a subdomain of it, or whose Name
+ *  relates to the domain label (subsidiaries on a different domain).
+ *  Single-hit exception: one loose hit and nothing precise is still better
+ *  than pretending we found nothing — it just stays one match, honestly
+ *  counted, instead of "1 of 10". Ported from the sf-ownership-desk rule. */
+function domainRelated(matches: CRMMatch[], domain: string): CRMMatch[] {
+  const d = domain.toLowerCase().replace(/^www\./, "");
+  const label = d.split(".")[0];
+  const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const hostHit = (m: CRMMatch) => {
+    const h = m.domain?.toLowerCase().replace(/^www\./, "");
+    return !!h && (h === d || h.endsWith(`.${d}`));
+  };
+  // Match name tokens, never a bare substring: "Machines Inc" contains
+  // "hines" and that is the very bug this filter exists to kill.
+  const nameHit = (m: CRMMatch) => {
+    if (!m.name || label.length < 3) return false;
+    const ts = tokens(m.name);
+    if (ts.includes(label)) return true; // "Hines Atlanta" ← hines.com
+    const joined = ts.join("");
+    if (joined.length < 4) return false;
+    return joined.startsWith(label) || label.startsWith(joined); // "Ware Malcomb" ← waremalcomb.com
+  };
+  const precise = matches.filter((m) => hostHit(m) || nameHit(m));
+  if (precise.length) return precise;
+  return matches.length === 1 ? matches : [];
 }
 
 // --- opportunity field sets (see the probe note at the top) ---

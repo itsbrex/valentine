@@ -360,13 +360,28 @@ export function targetBlocks(target: string, res: SweepResult, idPrefix: string,
   return { blocks, says };
 }
 
+/** The owner cell: linked name, a "claim" nudge when the CRM's owner is a
+ *  placeholder, or "unset" when there is none. */
+function ownerValue(s: SourceVerdict, nudge: string): string {
+  const f = s.facts!;
+  if (!s.owner) return `unset${pill(nudge)}`;
+  return link(s.owner, f.ownerUrl) + (f.ownerActive === false ? pill(nudge) : "");
+}
+
 function singleFields(s: SourceVerdict): { label: string; value: string }[] {
   const f = s.facts!;
   const out: { label: string; value: string }[] = [];
   const matchLabel = f.matchObject === "people" ? "Contact" : "Company";
   if (f.matchName) out.push({ label: matchLabel, value: link(f.matchName, f.matchUrl) + (f.matches > 1 ? pill(`1 of ${f.matches} matches`) : "") });
   if (f.parent) out.push({ label: "Account", value: link(f.parent.label, f.parent.url) });
-  out.push({ label: "Owner", value: s.owner ? link(s.owner, f.ownerUrl) + (f.ownerActive === false ? pill("claim it") : "") : `unset${pill("claim it")}` });
+  // "Owner · Most in touch": who the team assigned vs who actually has the
+  // relationship. Only split them when the CRM knows both and they differ —
+  // otherwise one Owner field, as before.
+  out.push(
+    f.contact
+      ? { label: "Owner · Most in touch", value: `${ownerValue(s, "claim it")} · ${esc(f.contact)}` }
+      : { label: "Owner", value: ownerValue(s, "claim it") },
+  );
   if (s.lastTouch) {
     const [date, kind] = [s.lastTouch.slice(0, 10), s.lastTouch.match(/\((\w+)\)/)?.[1]];
     out.push({ label: "Last touch", value: `${link(date, f.lastTouchUrl)}${kind ? ` · ${esc(kind)}` : ""}${f.stale ? pill(f.stale) : ""}` });
@@ -377,6 +392,7 @@ function singleFields(s: SourceVerdict): { label: string; value: string }[] {
   if (other.length) out.push({ label: other[0].kind === "campaign" ? "Campaign" : "List", value: other.map((l) => link(l.list, l.url)).join(" · ") });
   if (s.status && !f.opportunity?.stage) out.push({ label: "Stage / outcome", value: other[0]?.memberUrl ? link(s.status, other[0].memberUrl) : esc(s.status) });
   if (f.connectionStrength) out.push({ label: "Connection", value: esc(f.connectionStrength) });
+  if (f.firmographics) out.push({ label: "Company size", value: esc(f.firmographics) });
   if (f.firstInteraction) out.push({ label: "First contact", value: link(f.firstInteraction, f.views?.activity) });
   const people = peopleValue(f);
   if (people) out.push({ label: "Known people", value: people });
@@ -389,8 +405,11 @@ function pairedFields(found: SourceVerdict[]): { label: string; value: string }[
   const out: { label: string; value: string }[] = [];
   const rec = (s: SourceVerdict) => link(s.facts!.matchName ?? CRM_LABELS[s.crm], s.facts!.matchUrl);
   out.push({ label: `Record (${tag(a)} / ${tag(b)})`, value: `${rec(a)} / ${rec(b)}` });
-  const owner = (s: SourceVerdict) => (s.owner ? link(s.owner, s.facts!.ownerUrl) + (s.facts!.ownerActive === false ? pill("claim") : "") : `unset${pill("claim")}`);
+  const owner = (s: SourceVerdict) => ownerValue(s, "claim");
   out.push({ label: `Owner (${tag(a)} / ${tag(b)})`, value: `${owner(a)} / ${owner(b)}` });
+  for (const s of found)
+    if (s.facts!.contact && s.facts!.contact !== s.owner)
+      out.push({ label: `Most in touch (${tag(s)})`, value: esc(s.facts!.contact!) });
   const touch = (s: SourceVerdict) => (s.lastTouch ? link(s.lastTouch.slice(0, 10), s.facts!.lastTouchUrl) + (s.facts!.stale ? pill(s.facts!.stale) : "") : "—");
   out.push({ label: `Last touch (${tag(a)} / ${tag(b)})`, value: `${touch(a)} / ${touch(b)}` });
   for (const s of found) {

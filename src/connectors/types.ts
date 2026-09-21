@@ -26,6 +26,12 @@ export interface CRMMatch {
   ownerUrl?: string;
   /** False when the CRM says the owner is deactivated / a placeholder. */
   ownerActive?: boolean;
+  /** Who actually has the relationship, when the CRM tracks that separately
+   *  from the assigned owner (Attio's strongest connection). */
+  contact?: string;
+  /** "1,200 employees · $340M · Commercial Real Estate", when the org
+   *  enriches accounts. Optional everywhere — absent is the normal case. */
+  firmographics?: string;
   /** e.g. "Very strong". */
   connectionStrength?: string;
   /** YYYY-MM-DD of the most recent logged email, if any. */
@@ -194,6 +200,11 @@ export interface BriefFacts {
   ownerUrl?: string;
   /** False when the owner is deactivated / an "Unassigned" placeholder. */
   ownerActive?: boolean;
+  /** Who has the relationship, when the CRM distinguishes that from the
+   *  assigned owner. Attio: strongest_connection_user. */
+  contact?: string;
+  /** "1,200 employees · $340M · Commercial Real Estate", when available. */
+  firmographics?: string;
   connectionStrength?: string;
   firstInteraction?: string;
   lastEmail?: string;

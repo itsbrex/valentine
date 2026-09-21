@@ -514,3 +514,129 @@ test("Affinity: getContext strips note HTML and dedupes list entries", async () 
     people: ["Jane Founder"],
   });
 });
+
+// ─── Salesforce: loose Website match, tightened (f01) ────────────────────────
+
+test("Salesforce: the Website substring match is post-filtered to the real domain", async () => {
+  // `Website LIKE '%hines.com%'` also matches machines.com. Only the accounts
+  // whose host IS the domain (or a subdomain), or whose name relates to it,
+  // survive — so the card can say "1 match" honestly instead of "1 of 3".
+  mockFetch(() => ({
+    records: [
+      { Id: "001M", Name: "Machines Inc", Website: "https://www.machines.com" },
+      { Id: "001H", Name: "Hines Atlanta", Website: "https://www.hines.com" },
+      { Id: "001S", Name: "Hines EMEA", Website: "https://emea.hines.com" },
+      { Id: "001X", Name: "Unrelated Holdings", Website: "https://sunshines.com" },
+    ],
+  }));
+
+  const ms = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({
+    object: "companies",
+    domain: "hines.com",
+  });
+
+  assert.deepEqual(ms.map((m) => m.recordId), ["001H", "001S"], "machines.com and sunshines.com dropped");
+});
+
+test("Salesforce: a name-related account survives even on a different domain", async () => {
+  mockFetch(() => ({ records: [{ Id: "001H", Name: "Hines Interests", Website: "https://hines-interests.co.uk" }] }));
+  const ms = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "companies", domain: "hines.com" });
+  assert.deepEqual(ms.map((m) => m.recordId), ["001H"]);
+});
+
+test("Salesforce: a single loose hit is kept rather than returning nothing", async () => {
+  mockFetch(() => ({ records: [{ Id: "001Z", Name: "Totally Different", Website: "https://notit.example" }] }));
+  const ms = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "companies", domain: "hines.com" });
+  assert.equal(ms.length, 1, "one weak match beats pretending there is none");
+});
+
+// ─── Salesforce: firmographics probe (f04) ──────────────────────────────────
+
+test("Salesforce: firmographics come from the org's own fields, ZoomInfo fills the gaps", async () => {
+  mockFetch(() => ({
+    records: [
+      {
+        Id: "001A",
+        Name: "Acme",
+        Website: "https://acme.com",
+        NumberOfEmployees: 1200,
+        AnnualRevenue: 0, // 0 means "not filled in", never a $0 company
+        Industry: "",
+        ZoomInfo_Annual_Revenue__c: 340_000_000,
+        ZoomInfo_Primary_Industry__c: "Commercial Real Estate",
+      },
+    ],
+  }));
+
+  const [m] = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "companies", domain: "acme.com" });
+  assert.equal(m.firmographics, "1,200 employees · $340M · Commercial Real Estate");
+  assert.match(soqlOf(calls[0].url), /ZoomInfo_Employees__c/, "probes the enrichment tier first");
+});
+
+test("Salesforce: an org without the ZoomInfo package drops to the standard field set", async () => {
+  let attempt = 0;
+  mockFetch((url) => {
+    if (!soqlOf(url).startsWith("SELECT Id, Name, Website")) return { records: [] };
+    attempt++;
+    if (soqlOf(url).includes("ZoomInfo_Employees__c"))
+      return new Response(JSON.stringify([{ errorCode: "INVALID_FIELD", message: "No such column 'ZoomInfo_Employees__c'" }]), { status: 400 });
+    return { records: [{ Id: "001A", Name: "Acme", Website: "https://acme.com", NumberOfEmployees: 40 }] };
+  });
+
+  const sf = new SalesforceConnector("tok", "https://org.my.salesforce.com");
+  const [m] = await sf.search({ object: "companies", domain: "acme.com" });
+  assert.equal(attempt, 2, "one failed probe, then the standard set");
+  assert.equal(m.firmographics, "40 employees");
+
+  // …and the tier is remembered, so the next sweep never pays for the probe.
+  const before = calls.length;
+  await sf.search({ object: "companies", domain: "acme.com" });
+  assert.equal(calls.length - before, 1, "second search makes a single query");
+});
+
+// ─── Attio: assigned owner vs strongest connection (a01) ────────────────────
+
+test("Attio: a workspace owner attribute wins over the strongest connection, which becomes `contact`", async () => {
+  // Attio ships no standard owner field. A workspace that tracks assignment
+  // rolls its own (here a select mirrored from Salesforce); the strongest
+  // connection only says who emails them most. The card shows both.
+  mockFetch((url) => {
+    if (url.endsWith("/workspace_members")) return { data: [{ id: { workspace_member_id: "wm_1" }, first_name: "Ravi", last_name: "Patel" }] };
+    if (url.endsWith("/records/query"))
+      return {
+        data: [
+          {
+            id: { record_id: "rec_1" },
+            web_url: "https://app.attio.com/ws/company/rec_1",
+            values: {
+              name: [{ value: "Acme" }],
+              domains: [{ domain: "acme.com" }],
+              strongest_connection_user: [{ referenced_actor_id: "wm_1" }],
+              account_owner: [{ option: { title: "Sarah Lee" } }],
+              account_owner_s_email: [{ value: "sarah@example.com" }],
+            },
+          },
+        ],
+      };
+    return { data: [] };
+  });
+
+  const [m] = await new AttioConnector("k").search({ object: "companies", domain: "acme.com" });
+  assert.equal(m.owner, "Sarah Lee", "the assignment, not the connection");
+  assert.equal(m.contact, "Ravi Patel", "who is actually in touch");
+  assert.equal(m.ownerId, undefined, "a select owner is a name, not a member id");
+});
+
+test("Attio: with no owner attribute the strongest connection is still the owner, and `contact` stays absent", async () => {
+  mockFetch((url) => {
+    if (url.endsWith("/workspace_members")) return { data: [{ id: { workspace_member_id: "wm_1" }, first_name: "Ravi", last_name: "Patel" }] };
+    if (url.endsWith("/records/query"))
+      return { data: [{ id: { record_id: "rec_1" }, values: { name: [{ value: "Acme" }], strongest_connection_user: [{ referenced_actor_id: "wm_1" }] } }] };
+    return { data: [] };
+  });
+
+  const [m] = await new AttioConnector("k").search({ object: "companies", domain: "acme.com" });
+  assert.equal(m.owner, "Ravi Patel");
+  assert.equal(m.contact, undefined, "no second name to show — unchanged behaviour");
+  assert.equal(m.ownerId, "wm_1");
+});
