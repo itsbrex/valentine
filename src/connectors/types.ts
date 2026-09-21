@@ -32,6 +32,10 @@ export interface CRMMatch {
   /** "1,200 employees · $340M · Commercial Real Estate", when the org
    *  enriches accounts. Optional everywhere — absent is the normal case. */
   firmographics?: string;
+  /** The record's OWN LinkedIn URL as the CRM holds it — a company page for a
+   *  companies record, a profile for a people one. Beats the keyword-search
+   *  URL the surfaces fall back to when the CRM knows nothing. */
+  linkedin?: string;
   /** e.g. "Very strong". */
   connectionStrength?: string;
   /** YYYY-MM-DD of the most recent logged email, if any. */
@@ -205,6 +209,9 @@ export interface BriefFacts {
   contact?: string;
   /** "1,200 employees · $340M · Commercial Real Estate", when available. */
   firmographics?: string;
+  /** The matched record's own LinkedIn URL, straight from the CRM. When this
+   *  is set the LinkedIn entry in `links` is the real page, not a search. */
+  linkedin?: string;
   connectionStrength?: string;
   firstInteraction?: string;
   lastEmail?: string;

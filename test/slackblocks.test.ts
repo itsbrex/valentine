@@ -413,3 +413,23 @@ test("targetBlocks returns the says lines separately so multi-target messages ca
 test("esc escapes the mrkdwn specials only", () => {
   assert.equal(esc("A & B <c> *d*"), "A &amp; B &lt;c&gt; *d*");
 });
+
+test("the person button links their real profile when the CRM has it, a name search otherwise", async () => {
+  const { targetBlocks } = await import("../src/slackblocks.js");
+  const facts = (over: Record<string, unknown>) => ({
+    matchName: "Ted Bruenich", matchObject: "people", domain: "fpbarch.com", matches: 1,
+    people: [], lists: [], notes: [],
+    links: [{ label: "Website", url: "https://fpbarch.com" }, { label: "LinkedIn", url: "https://linkedin.com/company/fpba" }],
+    ...over,
+  });
+  const src = (f: any) => ({ crm: "attio" as const, verdict: "prior_contact" as const, summary: "s", citations: ["c1"], facts: f });
+
+  const withProfile = targetBlocks("fpbarch.com", { combined: src(facts({})) as any, sources: [src(facts({ linkedin: "https://linkedin.com/in/ted" })) as any] }, "t");
+  const labels = JSON.stringify(withProfile.blocks);
+  assert.match(labels, /https:\/\/linkedin\.com\/in\/ted/);
+
+  const without = targetBlocks("fpbarch.com", { combined: src(facts({})) as any, sources: [src(facts({})) as any] }, "t");
+  assert.match(JSON.stringify(without.blocks), /search\/results\/people\/\?keywords=Ted%20Bruenich/);
+  // …and either way the company button is the company page from the CRM.
+  assert.match(JSON.stringify(without.blocks), /https:\/\/linkedin\.com\/company\/fpba/);
+});

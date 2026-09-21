@@ -110,7 +110,10 @@ is set — it errors out with instructions instead.
     "links": [                     // click-to-act
       { "label": "Open in Attio", "url": "https://app.attio.com/<ws>/company/rec_abc" },
       { "label": "Website", "url": "https://acme.com" },
-      { "label": "LinkedIn", "url": "https://www.linkedin.com/search/results/companies/?keywords=Acme" }
+      { "label": "LinkedIn", "url": "https://linkedin.com/company/acme" }   // the record's real page when the
+                                        // CRM holds one (Attio's `linkedin` attribute); a keyword-search
+                                        // URL only as the fallback. Also surfaced on its own as
+                                        // `facts.linkedin` — a profile URL when the match is a person.
     ],
     "actions": [                   // read-only "act" links: prefilled new-record FORMS in the CRM
       { "label": "Log call", "url": "https://…/lightning/o/Task/new?defaultFieldValues=WhoId=003…,Subject=Call%20Jane" }

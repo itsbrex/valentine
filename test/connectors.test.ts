@@ -640,3 +640,53 @@ test("Attio: with no owner attribute the strongest connection is still the owner
   assert.equal(m.contact, undefined, "no second name to show — unchanged behaviour");
   assert.equal(m.ownerId, "wm_1");
 });
+
+// ─── Attio: the record's own LinkedIn beats a keyword search ────────────────
+
+test("Attio: the company's LinkedIn comes off the record, not a generated search", async () => {
+  mockFetch((url) => {
+    if (url.endsWith("/workspace_members")) return { data: [] };
+    if (url.endsWith("/records/query"))
+      return {
+        data: [
+          {
+            id: { record_id: "rec_1" },
+            values: {
+              name: [{ value: "Willdan" }],
+              domains: [{ domain: "willdan.com" }],
+              linkedin: [{ value: "https://linkedin.com/company/willdan", attribute_type: "text" }],
+              // A workspace carries dozens of other linkedin_* attributes; the
+              // exact slug is read on purpose so none of these can win.
+              linkedin_company_id: [{ value: "12345" }],
+              linkedin_tagline_1749270681: [{ value: "Engineering services" }],
+            },
+          },
+        ],
+      };
+    return { data: [] };
+  });
+
+  const [m] = await new AttioConnector("k").search({ object: "companies", domain: "willdan.com" });
+  assert.equal(m.linkedin, "https://linkedin.com/company/willdan");
+});
+
+test("Attio: a bare LinkedIn path is expanded, and a non-LinkedIn URL is ignored", async () => {
+  const cases: [unknown, string | undefined][] = [
+    [[{ value: "company/acme" }], "https://www.linkedin.com/company/acme"],
+    [[{ value: "/in/jane-doe" }], "https://www.linkedin.com/in/jane-doe"],
+    [[{ value: "https://www.linkedin.com/company/acme" }], "https://www.linkedin.com/company/acme"],
+    [[{ value: "https://notlinkedin.com/company/acme" }], undefined], // must not be mistaken for the real host
+    [[{ value: "   " }], undefined],
+    [[], undefined],
+    [undefined, undefined],
+  ];
+  for (const [raw, want] of cases) {
+    mockFetch((url) => {
+      if (url.endsWith("/workspace_members")) return { data: [] };
+      if (url.endsWith("/records/query")) return { data: [{ id: { record_id: "r" }, values: { name: [{ value: "Acme" }], linkedin: raw } }] };
+      return { data: [] };
+    });
+    const [m] = await new AttioConnector("k").search({ object: "companies", domain: "acme.com" });
+    assert.equal(m.linkedin, want, `for ${JSON.stringify(raw)}`);
+  }
+});

@@ -587,7 +587,11 @@ function otherLinks(s?: SourceVerdict): RecordLink[] {
   const site = f.links.find((l) => l.label === "Website");
   if (site) out.push(site);
   if (f.matchObject === "people" && f.matchName)
-    out.push({ label: `LinkedIn · ${f.matchName.split(" ")[0]}`, url: `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${f.matchName} ${f.parent?.label ?? f.domain ?? ""}`.trim())}` });
+    out.push({
+      label: `LinkedIn · ${f.matchName.split(" ")[0]}`,
+      // Their actual profile when the CRM has it; a name search otherwise.
+      url: f.linkedin ?? `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${f.matchName} ${f.parent?.label ?? f.domain ?? ""}`.trim())}`,
+    });
   const li = f.links.find((l) => l.label === "LinkedIn");
   if (li) out.push({ label: "LinkedIn · company", url: li.url });
   return out;

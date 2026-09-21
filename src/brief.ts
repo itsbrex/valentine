@@ -50,10 +50,15 @@ function linksFor(top: CRMMatch | undefined, crmName: string, target: Evidence["
   if (top?.url) links.push({ label: `Open in ${crmName}`, url: top.url });
   const domain = top?.domain ?? (target.kind === "domain" ? target.value : undefined);
   if (domain) links.push({ label: "Website", url: `https://${domain}` });
+  // The company's real page when the CRM holds one, a keyword search only as
+  // a fallback. A people match's own `linkedin` is that person's profile, not
+  // their employer's, so it never stands in for the company link here —
+  // otherLinks uses it for the person button instead.
   const q = top?.name ?? target.value;
+  const page = top?.object === "companies" ? top.linkedin : undefined;
   links.push({
     label: "LinkedIn",
-    url: `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(q)}`,
+    url: page ?? `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(q)}`,
   });
   return links;
 }
@@ -140,6 +145,7 @@ export function judge(ev: Evidence, crm: CRMConnector | string): Judged {
     ownerActive: top?.ownerActive,
     contact: top?.contact,
     firmographics: top?.firmographics,
+    linkedin: top?.linkedin,
     connectionStrength: top?.connectionStrength,
     firstInteraction: top?.firstInteraction,
     lastEmail: top?.lastEmail,

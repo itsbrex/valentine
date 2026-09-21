@@ -316,3 +316,27 @@ test("brief: the model's next_step rides the same grounding gate as the summary"
   const c = await brief(good, "m", fakeCrm([]).crm, "nobody.io");
   assert.equal(c.nextStep, "Clear to reach out — create the record in Fake so the next sweep sees it.");
 });
+
+test("links: the LinkedIn entry is the company's real page when the CRM has one, a search when it does not", async () => {
+  const { judge } = await import("../src/brief.js");
+  const base = { recordId: "r", object: "companies" as const, name: "Willdan", domain: "willdan.com" };
+  const ev = (over: Partial<typeof base> & { linkedin?: string }) => ({
+    target: { kind: "domain" as const, value: "willdan.com" },
+    matches: [{ ...base, ...over }],
+    contexts: new Map(),
+  });
+
+  const real = judge(ev({ linkedin: "https://linkedin.com/company/willdan" }) as any, "Attio");
+  assert.equal(real.facts.links.find((l) => l.label === "LinkedIn")!.url, "https://linkedin.com/company/willdan");
+  assert.equal(real.facts.linkedin, "https://linkedin.com/company/willdan");
+
+  const search = judge(ev({}) as any, "Attio");
+  assert.match(search.facts.links.find((l) => l.label === "LinkedIn")!.url, /\/search\/results\/companies\/\?keywords=Willdan/);
+  assert.equal(search.facts.linkedin, undefined);
+
+  // A person's own profile is NOT their employer's page, so it never stands
+  // in for the company link.
+  const person = judge(ev({ object: "people" as any, name: "Jane Doe", linkedin: "https://linkedin.com/in/jane-doe" }) as any, "Attio");
+  assert.match(person.facts.links.find((l) => l.label === "LinkedIn")!.url, /\/search\/results\/companies\//);
+  assert.equal(person.facts.linkedin, "https://linkedin.com/in/jane-doe");
+});

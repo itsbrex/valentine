@@ -104,6 +104,7 @@ export class AttioConnector implements CRMConnector {
         owner,
         ...(owner && ownerId ? { ownerId } : {}),
         ...(contact && contact !== owner ? { contact } : {}),
+        ...(linkedinUrl(v.linkedin) ? { linkedin: linkedinUrl(v.linkedin) } : {}),
         connectionStrength: select(v.strongest_connection_strength),
         lastEmail: dateOf(interaction(v.last_email_interaction)),
         lastMeeting: dateOf(interaction(v.last_calendar_interaction)),
@@ -247,6 +248,27 @@ const text = (v: any) => first(v)?.value ?? first(v)?.full_name ?? undefined;
 const domain = (v: any) => first(v)?.domain ?? first(v)?.root_domain ?? undefined;
 const select = (v: any) => first(v)?.option?.title ?? undefined;
 const actorRef = (v: any) => first(v)?.referenced_actor_id ?? undefined;
+
+/** Attio's standard enriched `linkedin` attribute — a company page on a
+ *  company, a profile on a person. Read by its EXACT slug on purpose: a
+ *  workspace can carry dozens of other `linkedin_*` attributes (handle, id,
+ *  headline, last message…) and a loose match would grab the wrong one.
+ *  Accepts a bare `company/acme` or `in/jane` path too, since some workspaces
+ *  store the handle rather than the full URL. */
+function linkedinUrl(raw: unknown): string | undefined {
+  const v = first(raw);
+  const s = (typeof v === "string" ? v : typeof v?.value === "string" ? v.value : "").trim();
+  if (!s) return undefined;
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      return /(^|\.)linkedin\.com$/i.test(new URL(s).hostname) ? s : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const path = s.replace(/^\/+/, "");
+  return /^(company|in|school|showcase)\//i.test(path) ? `https://www.linkedin.com/${path}` : undefined;
+}
 
 /** The workspace's own "owner" attribute, when it has one. Attio ships no
  *  standard owner field, so workspaces roll their own — a select or text
