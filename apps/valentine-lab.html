@@ -521,6 +521,8 @@ pre.out{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--
 .slack .acts{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 2px}
 .slack .acts a{display:inline-block;border:1px solid #6b6d70;color:inherit;text-decoration:none;border-radius:4px;padding:4px 12px;font-weight:700;font-size:13px;background:transparent}
 .slack .acts a:hover{background:#2c2d30}
+.slack .acts a.primary{background:#007a5a;border-color:#007a5a;color:#fff}
+.slack .acts a.danger{border-color:#e01e5a;color:#e01e5a}
 .slack code{background:#2c2d30;border:1px solid #3a3d42;border-radius:3px;padding:0 3px;font-size:12px;color:#e8912d}
 .slack a.lnk{color:#1d9bd1;text-decoration:none}
 /* bench */
@@ -1222,8 +1224,15 @@ function slackHtml(blocks, text) {
   const inner = (blocks || []).map(b => {
     if (b.type === 'header') return '<div class="hdr">' + h(b.text.text) + '</div>';
     if (b.type === 'divider') return '<div class="divider"></div>';
-    if (b.type === 'context') return '<div class="ctx">' + b.elements.map(e => mrk(e.text)).join(' ') + '</div>';
-    if (b.type === 'actions') return '<div class="acts">' + b.elements.map(e => '<a href="' + h(e.url) + '" target="_blank" rel="noopener">' + h(e.text.text) + '</a>').join('') + '</div>';
+    if (b.type === 'context') return '<div class="ctx">' + (b.elements || []).filter(e => e && e.text).map(e => mrk(e.text)).join(' ') + '</div>';
+    if (b.type === 'actions') return '<div class="acts">' + (b.elements || []).map(e => {
+      // v2 card: link buttons (url), write/menu buttons (action_id, no url) and the ··· overflow menu.
+      if (e.type === 'overflow') return '<a href="#" onclick="return false" title="' + h((e.options || []).map(o => o.text && o.text.text).filter(Boolean).join(' · ')) + '">···</a>';
+      const label = e.text && e.text.text ? e.text.text : (e.action_id || e.type || '');
+      const cls = e.style === 'primary' ? ' class="primary"' : e.style === 'danger' ? ' class="danger"' : '';
+      if (e.url) return '<a' + cls + ' href="' + h(e.url) + '" target="_blank" rel="noopener">' + h(label) + '</a>';
+      return '<a' + cls + ' href="#" onclick="return false" title="' + h(e.action_id || '') + '">' + h(label) + '</a>';
+    }).join('') + '</div>';
     if (b.type === 'section') {
       let s = '';
       if (b.text) s += '<div class="sec">' + mrk(b.text.text) + '</div>';
