@@ -24,6 +24,8 @@ verdict. It never writes, sends, or moves anything.
 | `VALENTINE_SLACK_DM_USER` | for `watch --notify slack` | Member ID (`U…`) the heads-up DMs go to. |
 | `VALENTINE_WRITES` | no | `1` switches on the **opt-in** Slack write-through buttons (Create in Attio, Claim owner, Link IDs, Log meeting…). Off by default; `0` forces off whatever the config says. Every write is confirmed in Slack. |
 | `VALENTINE_ATTIO_WRITE_KEY` | no | Attio token used for writes, so `VALENTINE_ATTIO_KEY` can stay read-only. Falls back to the read key when writes are on. |
+| `VALENTINE_ATTIO_OWNER_NAME` | no | What *Claim owner* writes when the workspace's owner attribute is a select or text field. Defaults to the token holder's Attio workspace-member name. A select only accepts an option that already exists — the API cannot add one. |
+| `VALENTINE_ATTIO_OWNER_EMAIL` | no | Paired address for a sibling "owner email" attribute. Defaults to the member's Attio email; override when the owner field mirrors another system that expects a work address. |
 | `VALENTINE_MUTES_FILE` | no | Where the card's *Mute domain* / *Mark handled* state lives (default `~/.valentine/mutes.json`). |
 
 Set `ANTHROPIC_API_KEY` plus exactly one CRM key. Which CRM and which model
@@ -86,6 +88,10 @@ is set — it errors out with instructions instead.
     "domain": "acme.com", "matches": 1,
     "ownerUrl": "https://…/lightning/r/User/005…/view",   // Salesforce only
     "ownerActive": true,           // false = deactivated or a placeholder like "Unassigned …"
+    "contact": "Ravi Patel",       // who is most in touch, when the CRM tracks that apart from the
+                                   // assigned owner (Attio: strongest connection). The card then
+                                   // reads "Owner · Most in touch" instead of conflating the two.
+    "firmographics": "1,200 employees · $340M · Commercial Real Estate",  // when the org enriches accounts
     "connectionStrength": "Very strong", "firstInteraction": "2025-01-02",
     "lastEmail": "2026-05-12", "lastMeeting": "2026-04-01",
     "lastTouchUrl": "https://…/emails",   // the Task/Event, or the record's activity/emails tab
@@ -163,6 +169,9 @@ Example MCP client config (Claude Desktop / Cursor / any stdio MCP host):
 - **Read-only.** No mutating method exists in the CRM connector contract. The
   CLI, `--json`, and the MCP tool never write. The one write path is the
   opt-in Slack card (`VALENTINE_WRITES=1`, a separate `src/writers/` contract,
-  human-confirmed per write) — off unless you switch it on.
+  human-confirmed per write) — off unless you switch it on. *Add note* is the
+  one button with no confirm dialog: it opens a modal, and the text you type
+  is the confirmation. It writes to every CRM that knows the target, the same
+  rule as `/valentine note`.
 - **Local.** Keys and data stay on the host; only the model call leaves.
 - **Deterministic surface.** Same JSON shape + exit codes on every run.
