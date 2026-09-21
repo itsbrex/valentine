@@ -190,7 +190,7 @@ test("Attio claimOwner: falls back to a select 'owner' attribute, writing the me
   mockFetch((m, url) => {
     if (url.endsWith("/self")) return { authorized_by_workspace_member_id: "wm_me", workspace_slug: "ws" };
     if (url.endsWith("/workspace_members"))
-      return { data: [{ id: { workspace_member_id: "wm_me" }, first_name: "Brian", last_name: "Roach", email_address: "brian@itsbrex.dev" }] };
+      return { data: [{ id: { workspace_member_id: "wm_me" }, first_name: "Dana", last_name: "Reed", email_address: "dana@personal.example" }] };
     if (url.endsWith("/objects/companies/attributes"))
       return {
         data: [
@@ -205,8 +205,8 @@ test("Attio claimOwner: falls back to a select 'owner' attribute, writing the me
 
   const r = await at().claimOwner("companies", "c_1");
   const patch = calls.find((c) => c.method === "PATCH")!;
-  assert.deepEqual(patch.body, { data: { values: { account_owner: "Brian Roach", account_owner_s_email: "brian@itsbrex.dev" } } });
-  assert.match(r.label, /account_owner set to Brian Roach/);
+  assert.deepEqual(patch.body, { data: { values: { account_owner: "Dana Reed", account_owner_s_email: "dana@personal.example" } } });
+  assert.match(r.label, /account_owner set to Dana Reed/);
 });
 
 test("Attio claimOwner: the configured identity wins over the Attio login, for a mirrored owner field", async () => {
@@ -214,16 +214,16 @@ test("Attio claimOwner: the configured identity wins over the Attio login, for a
   // work identity — that is what attioOwnerName/Email exist for.
   mockFetch((m, url) => {
     if (url.endsWith("/self")) return { authorized_by_workspace_member_id: "wm_me", workspace_slug: "ws" };
-    if (url.endsWith("/workspace_members")) return { data: [{ id: { workspace_member_id: "wm_me" }, first_name: "Brian", last_name: "Roach", email_address: "brian@itsbrex.dev" }] };
+    if (url.endsWith("/workspace_members")) return { data: [{ id: { workspace_member_id: "wm_me" }, first_name: "Dana", last_name: "Reed", email_address: "dana@personal.example" }] };
     if (url.endsWith("/attributes"))
       return { data: [{ api_slug: "account_owner", title: "Account Owner", type: "select", is_writable: true }, { api_slug: "account_owner_s_email", type: "text", is_writable: true }] };
     if (m === "PATCH") return { data: {} };
     return {};
   });
 
-  await new AttioWriter("wkey", { name: "Brian Roach", email: "broach@cresa.com" }).claimOwner("companies", "c_1");
+  await new AttioWriter("wkey", { name: "Dana Reed", email: "dana@work.example" }).claimOwner("companies", "c_1");
   assert.deepEqual(calls.find((c) => c.method === "PATCH")!.body, {
-    data: { values: { account_owner: "Brian Roach", account_owner_s_email: "broach@cresa.com" } },
+    data: { values: { account_owner: "Dana Reed", account_owner_s_email: "dana@work.example" } },
   });
 });
 
