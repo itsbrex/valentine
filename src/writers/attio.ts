@@ -16,13 +16,22 @@ import type { CRMWriter, WriteResult, RecordObject, CompanyDraft, PersonDraft, A
 const BASE = "https://api.attio.com/v2";
 const APP = "https://app.attio.com";
 
+/** An owner attribute the workspace actually has, and how to write it. */
+type OwnerAttr = { slug: string; kind: "actor" | "select" | "text" };
+
 export class AttioWriter implements CRMWriter {
   readonly name = "Attio";
-  private me?: { id: string; name?: string };
+  private me?: { id: string; name?: string; email?: string };
   private slug?: string;
-  private ownerAttr?: string | null;
+  private ownerAttr = new Map<RecordObject, OwnerAttr | null>();
+  private ownerEmailAttr = new Map<RecordObject, string | null>();
 
-  constructor(private apiKey: string) {}
+  constructor(
+    private apiKey: string,
+    /** What "claim" writes when the owner attribute is a select or text —
+     *  defaults to the token holder's own workspace-member name and email. */
+    private identity: { name?: string; email?: string } = {},
+  ) {}
 
   private async req(method: "GET" | "POST" | "PATCH" | "PUT", path: string, body?: unknown): Promise<any> {
     const res = await fetch(`${BASE}${path}`, {
@@ -48,7 +57,7 @@ export class AttioWriter implements CRMWriter {
     return this.slug ? `${APP}/${this.slug}/${object === "people" ? "person" : "company"}/${id}` : undefined;
   }
 
-  async whoami(): Promise<{ id: string; name?: string }> {
+  async whoami(): Promise<{ id: string; name?: string; email?: string }> {
     if (this.me) return this.me;
     const d = await this.req("GET", "/self");
     const s = d?.data ?? d;
@@ -56,6 +65,19 @@ export class AttioWriter implements CRMWriter {
     const id: string | undefined = s?.authorized_by_workspace_member_id ?? undefined;
     if (!id) throw new Error("Attio token is not a workspace member's (no authorized_by_workspace_member_id) — writes need a user token.");
     this.me = { id };
+    // /self gives the id but no display name; a select-shaped owner attribute
+    // needs one. Best effort — a token without member access still claims an
+    // actor-reference owner fine, which is what /self alone supports.
+    try {
+      const m = await this.req("GET", "/workspace_members");
+      const mine = (m?.data ?? []).find((x: any) => x?.id?.workspace_member_id === id);
+      if (mine) {
+        const name = [mine.first_name, mine.last_name].filter(Boolean).join(" ").trim();
+        this.me = { id, ...(name ? { name } : {}), ...(mine.email_address ? { email: mine.email_address } : {}) };
+      }
+    } catch {
+      /* no member access → name/email stay unknown */
+    }
     return this.me;
   }
 
@@ -88,31 +110,86 @@ export class AttioWriter implements CRMWriter {
     return { ...rec, label: `Person ${d.name} created in Attio` };
   }
 
-  /** The writable actor-reference attribute that plays "owner" on companies,
-   *  if the workspace has one. Cached; null when absent. */
-  private async ownerAttribute(object: RecordObject): Promise<string | null> {
-    if (this.ownerAttr !== undefined) return this.ownerAttr;
-    const d = await this.req("GET", `/objects/${object}/attributes`);
-    const attrs: any[] = d?.data ?? [];
-    const hit = attrs.find(
-      (a) => a?.type === "actor-reference" && a?.is_writable !== false && /owner/i.test(`${a?.api_slug} ${a?.title}`),
-    );
-    this.ownerAttr = (hit?.api_slug as string | undefined) ?? null;
-    return this.ownerAttr;
+  /** The writable attribute that plays "owner" on this object, if the
+   *  workspace has one. Attio ships no standard owner field, so workspaces
+   *  roll their own: an actor-reference on some, a select of rep names
+   *  mirrored from another system on others (a select is the common shape
+   *  when the CRM is downstream of Salesforce). Prefer actor-reference — it
+   *  is a real user link — then select, then text. Cached per object; null
+   *  when the workspace has nothing owner-shaped. */
+  private async ownerAttribute(object: RecordObject): Promise<OwnerAttr | null> {
+    const cached = this.ownerAttr.get(object);
+    if (cached !== undefined) return cached;
+    let hit: OwnerAttr | null = null;
+    let email: string | null = null;
+    try {
+      const d = await this.req("GET", `/objects/${object}/attributes`);
+      const attrs: any[] = d?.data ?? [];
+      const named = attrs.filter((a) => a?.is_writable !== false && /owner/i.test(`${a?.api_slug} ${a?.title}`));
+      const owners = named.filter((a) => !/email/i.test(`${a?.api_slug} ${a?.title}`));
+      const pick = (type: string) => owners.find((a) => a?.type === type)?.api_slug as string | undefined;
+      const actor = pick("actor-reference");
+      const select = pick("select");
+      const text = pick("text");
+      if (actor) hit = { slug: actor, kind: "actor" };
+      else if (select) hit = { slug: select, kind: "select" };
+      else if (text) hit = { slug: text, kind: "text" };
+      email = (named.find((a) => /email/i.test(`${a?.api_slug} ${a?.title}`))?.api_slug as string | undefined) ?? null;
+    } catch {
+      /* no attribute-read access → treat as "no owner attribute" */
+    }
+    this.ownerAttr.set(object, hit);
+    this.ownerEmailAttr.set(object, email);
+    return hit;
   }
 
   async claimOwner(object: RecordObject, recordId: string, ownerId?: string): Promise<WriteResult> {
     const attr = await this.ownerAttribute(object);
     if (!attr)
       throw new Error(
-        "Attio has no owner attribute on this object — add one (type: user / actor reference, named Owner) and try again.",
+        "Attio has no owner attribute on this object — add one (a user/actor reference, or a select named Owner) and try again.",
       );
-    const owner = ownerId ?? (await this.whoami()).id;
-    const d = await this.req("PATCH", `/objects/${object}/records/${recordId}`, {
-      data: { values: { [attr]: [{ referenced_actor_type: "workspace-member", referenced_actor_id: owner }] } },
-    });
+
+    const values: Record<string, unknown> = {};
+    let who: string;
+    if (attr.kind === "actor") {
+      const id = ownerId ?? (await this.whoami()).id;
+      values[attr.slug] = [{ referenced_actor_type: "workspace-member", referenced_actor_id: id }];
+      who = "you";
+    } else {
+      // A select can only hold an option that already exists — the API cannot
+      // add one (object_configuration is read-only for a member token), so a
+      // name with no matching option comes back as a 400 saying exactly that.
+      const me = await this.whoami();
+      const name = this.identity.name ?? me.name;
+      if (!name)
+        throw new Error(
+          `Attio ${attr.slug} is a ${attr.kind} attribute, so the claim needs a display name. Set attioOwnerName (VALENTINE_ATTIO_OWNER_NAME) to the option title to write.`,
+        );
+      values[attr.slug] = name;
+      who = name;
+      const emailAttr = this.ownerEmailAttr.get(object) ?? null;
+      const email = this.identity.email ?? me.email;
+      if (emailAttr && email) values[emailAttr] = email;
+    }
+
+    let d: any;
+    try {
+      d = await this.req("PATCH", `/objects/${object}/records/${recordId}`, { data: { values } });
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      if (attr.kind === "select" && /400/.test(msg))
+        throw new Error(
+          `Attio rejected "${who}" for ${attr.slug} — a select only accepts an option that already exists, and the API cannot add one. Add "${who}" as an option in Attio settings, or set attioOwnerName to an existing option title. (${msg.slice(0, 120)})`,
+        );
+      throw e;
+    }
     this.learnSlug(d?.data?.web_url);
-    return { id: recordId, url: this.url(object, recordId, d?.data?.web_url), label: `Attio ${attr} set to you` };
+    return {
+      id: recordId,
+      url: this.url(object, recordId, d?.data?.web_url),
+      label: `Attio ${attr.slug} set to ${who}`,
+    };
   }
 
   private async note(object: RecordObject, recordId: string, title: string, content: string): Promise<string> {

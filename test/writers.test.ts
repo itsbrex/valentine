@@ -182,3 +182,79 @@ test("Attio crosslink and logActivity are notes on the record — no invented at
   await at().logActivity("companies", "c_1", { kind: "meeting", subject: "Bi-weekly", at: "2026-10-01T15:00:00Z" });
   assert.equal(calls[1].body.data.title, "Meeting · 2026-10-01 · Bi-weekly");
 });
+
+test("Attio claimOwner: falls back to a select 'owner' attribute, writing the member's name and email", async () => {
+  // Attio ships no standard owner field. A workspace downstream of Salesforce
+  // typically mirrors it as a select of rep names plus an email text field —
+  // there is no actor-reference to point at, so the claim writes the name.
+  mockFetch((m, url) => {
+    if (url.endsWith("/self")) return { authorized_by_workspace_member_id: "wm_me", workspace_slug: "ws" };
+    if (url.endsWith("/workspace_members"))
+      return { data: [{ id: { workspace_member_id: "wm_me" }, first_name: "Brian", last_name: "Roach", email_address: "brian@itsbrex.dev" }] };
+    if (url.endsWith("/objects/companies/attributes"))
+      return {
+        data: [
+          { api_slug: "name", type: "text" },
+          { api_slug: "account_owner", title: "Account Owner", type: "select", is_writable: true },
+          { api_slug: "account_owner_s_email", title: "Account Owner's Email", type: "text", is_writable: true },
+        ],
+      };
+    if (m === "PATCH") return { data: { web_url: "https://app.attio.com/ws/company/c_1" } };
+    return {};
+  });
+
+  const r = await at().claimOwner("companies", "c_1");
+  const patch = calls.find((c) => c.method === "PATCH")!;
+  assert.deepEqual(patch.body, { data: { values: { account_owner: "Brian Roach", account_owner_s_email: "brian@itsbrex.dev" } } });
+  assert.match(r.label, /account_owner set to Brian Roach/);
+});
+
+test("Attio claimOwner: the configured identity wins over the Attio login, for a mirrored owner field", async () => {
+  // The Attio login can be a personal address while the owner field mirrors a
+  // work identity — that is what attioOwnerName/Email exist for.
+  mockFetch((m, url) => {
+    if (url.endsWith("/self")) return { authorized_by_workspace_member_id: "wm_me", workspace_slug: "ws" };
+    if (url.endsWith("/workspace_members")) return { data: [{ id: { workspace_member_id: "wm_me" }, first_name: "Brian", last_name: "Roach", email_address: "brian@itsbrex.dev" }] };
+    if (url.endsWith("/attributes"))
+      return { data: [{ api_slug: "account_owner", title: "Account Owner", type: "select", is_writable: true }, { api_slug: "account_owner_s_email", type: "text", is_writable: true }] };
+    if (m === "PATCH") return { data: {} };
+    return {};
+  });
+
+  await new AttioWriter("wkey", { name: "Brian Roach", email: "broach@cresa.com" }).claimOwner("companies", "c_1");
+  assert.deepEqual(calls.find((c) => c.method === "PATCH")!.body, {
+    data: { values: { account_owner: "Brian Roach", account_owner_s_email: "broach@cresa.com" } },
+  });
+});
+
+test("Attio claimOwner: a select option that does not exist explains itself instead of leaking a raw 400", async () => {
+  // A member token cannot add select options (object_configuration is
+  // read-only), so the only fix is a human adding the option in Attio.
+  mockFetch((m, url) => {
+    if (url.endsWith("/self")) return { authorized_by_workspace_member_id: "wm_me" };
+    if (url.endsWith("/workspace_members")) return { data: [] };
+    if (url.endsWith("/attributes")) return { data: [{ api_slug: "account_owner", title: "Account Owner", type: "select", is_writable: true }] };
+    if (m === "PATCH") return new Response(JSON.stringify({ message: "Unknown select option" }), { status: 400 });
+    return {};
+  });
+
+  await assert.rejects(
+    new AttioWriter("wkey", { name: "Nobody Here" }).claimOwner("companies", "c_1"),
+    /a select only accepts an option that already exists/,
+  );
+});
+
+test("Attio claimOwner: an actor-reference attribute still wins over a select", async () => {
+  mockFetch((m, url) => {
+    if (url.endsWith("/self")) return { authorized_by_workspace_member_id: "wm_me" };
+    if (url.endsWith("/workspace_members")) return { data: [] };
+    if (url.endsWith("/attributes"))
+      return { data: [{ api_slug: "account_owner", type: "select", is_writable: true }, { api_slug: "owner", type: "actor-reference", is_writable: true }] };
+    if (m === "PATCH") return { data: {} };
+    return {};
+  });
+  await at().claimOwner("companies", "c_1");
+  assert.deepEqual(calls.find((c) => c.method === "PATCH")!.body, {
+    data: { values: { owner: [{ referenced_actor_type: "workspace-member", referenced_actor_id: "wm_me" }] } },
+  });
+});

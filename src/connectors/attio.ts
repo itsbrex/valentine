@@ -85,8 +85,16 @@ export class AttioConnector implements CRMConnector {
     return recs.map((r) => {
       const v = r.values;
       const li = interaction(v.last_interaction);
-      const ownerId = actorRef(v.strongest_connection_user);
-      const owner = members.get(ownerId ?? "") || undefined;
+      // Attio has no standard owner attribute. The strongest connection says
+      // who is *in touch*; a workspace that tracks assignment rolls its own
+      // attribute for it. Prefer the assignment when there is one and keep
+      // the connection as `contact`, so the card can show "Owner · Most in
+      // touch" instead of conflating the two.
+      const connId = actorRef(v.strongest_connection_user);
+      const contact = members.get(connId ?? "") || undefined;
+      const assigned = ownerAttrValue(v);
+      const owner = assigned ?? contact;
+      const ownerId = assigned ? undefined : connId;
       this.learnSlug(r.web_url);
       return {
         recordId: r.id.record_id,
@@ -95,6 +103,7 @@ export class AttioConnector implements CRMConnector {
         domain: domain(v.domains),
         owner,
         ...(owner && ownerId ? { ownerId } : {}),
+        ...(contact && contact !== owner ? { contact } : {}),
         connectionStrength: select(v.strongest_connection_strength),
         lastEmail: dateOf(interaction(v.last_email_interaction)),
         lastMeeting: dateOf(interaction(v.last_calendar_interaction)),
@@ -238,6 +247,23 @@ const text = (v: any) => first(v)?.value ?? first(v)?.full_name ?? undefined;
 const domain = (v: any) => first(v)?.domain ?? first(v)?.root_domain ?? undefined;
 const select = (v: any) => first(v)?.option?.title ?? undefined;
 const actorRef = (v: any) => first(v)?.referenced_actor_id ?? undefined;
+
+/** The workspace's own "owner" attribute, when it has one. Attio ships no
+ *  standard owner field, so workspaces roll their own — a select or text
+ *  attribute whose slug mentions owner (on this workspace, `account_owner`,
+ *  mirrored from Salesforce). Read straight off the values already returned
+ *  by the record query, so it costs no extra request and a workspace without
+ *  one simply gets `undefined`. Email variants are skipped, and so is an
+ *  actor-reference, which carries an id here rather than a display name. */
+function ownerAttrValue(values: Record<string, any>): string | undefined {
+  for (const [slug, raw] of Object.entries(values)) {
+    if (!/owner/i.test(slug) || /email/i.test(slug)) continue;
+    const f = first(raw);
+    const t = f?.option?.title ?? (typeof f?.value === "string" ? f.value : undefined);
+    if (typeof t === "string" && t.trim()) return t.trim();
+  }
+  return undefined;
+}
 const count = (v: any) => (Array.isArray(v) ? v.length : undefined);
 function interaction(v: any): { type: string; date?: string } | undefined {
   const f = first(v);

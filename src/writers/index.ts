@@ -22,7 +22,7 @@ export function makeWriter(cfg: Config, crm: CrmId): CRMWriter | undefined {
     }
     case "attio": {
       const key = cfg.attioWriteKey ?? cfg.attioKey;
-      return key ? new AttioWriter(key) : undefined;
+      return key ? new AttioWriter(key, { name: cfg.attioOwnerName, email: cfg.attioOwnerEmail }) : undefined;
     }
     default:
       return undefined; // Affinity: no writer yet

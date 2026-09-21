@@ -47,6 +47,15 @@ export interface Config {
   /** Attio token used for writes, so the read token can stay read-only.
    *  Falls back to `attioKey` when writes are on and this is unset. */
   attioWriteKey?: string;
+  /** What "Claim owner" writes into a workspace's own owner attribute.
+   *  Defaults to the token holder's Attio workspace-member name and email.
+   *  Override when the workspace's owner field mirrors another system and
+   *  expects a different identity there — e.g. an Attio login of
+   *  name@personal.dev whose Account Owner option reads "Jane Doe" with a
+   *  work address. A select option must match an EXISTING option title: the
+   *  read token cannot create options. */
+  attioOwnerName?: string;
+  attioOwnerEmail?: string;
   /** How a sweep runs. "brief" (default): deterministic CRM reads + one
    *  structured model call for the summary. "agent": the original tool-calling
    *  loop where the model decides what to read. VALENTINE_STRATEGY overrides. */
@@ -93,6 +102,8 @@ export function loadConfig(): Config {
   };
   fill("attioKey", process.env.VALENTINE_ATTIO_KEY);
   fill("attioWriteKey", process.env.VALENTINE_ATTIO_WRITE_KEY);
+  fill("attioOwnerName", process.env.VALENTINE_ATTIO_OWNER_NAME);
+  fill("attioOwnerEmail", process.env.VALENTINE_ATTIO_OWNER_EMAIL);
   fill("affinityKey", process.env.VALENTINE_AFFINITY_KEY);
   fill("salesforceKey", process.env.VALENTINE_SALESFORCE_KEY);
   fill("salesforceInstanceUrl", process.env.VALENTINE_SALESFORCE_INSTANCE_URL);
