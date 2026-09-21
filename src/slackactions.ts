@@ -24,11 +24,22 @@ export interface ActionReply {
   blocks?: unknown[];
   /** Replace the card the button lives on (re-run) instead of adding an ephemeral line. */
   replace?: boolean;
+  /** Post where the channel can see it rather than only the presser (prep brief). */
+  inChannel?: boolean;
+  /** Open this modal instead of replying — `views.open` needs the trigger_id,
+   *  so the caller with the payload in hand does the call. */
+  openModal?: unknown;
+  /** Post this reply to a response_url the payload did not carry (a modal
+   *  submission, which remembers the card's url in private_metadata). */
+  postTo?: string;
 }
 
 export interface ActionContext {
   /** Slack user who pressed the button — for the audit line. */
   user?: string;
+  /** The card's response_url. A `view_submission` carries none of its own, so
+   *  the modal remembers where to post its outcome. */
+  responseUrl?: string;
 }
 
 const ok = (lines: string[]): ActionReply => ({ text: lines.map((l) => `✅ ${l}`).join("\n") });
@@ -47,7 +58,9 @@ export function parseActionValue(raw: string | undefined): CardAction | { menu: 
     }
   }
   const [menu, ...args] = raw.split("|");
-  return menu === "rerun" || menu === "copy" || menu === "mute" || menu === "handled" ? { menu, args } : undefined;
+  return menu === "rerun" || menu === "copy" || menu === "mute" || menu === "handled" || menu === "brief"
+    ? { menu, args }
+    : undefined;
 }
 
 export async function handleMenu(
@@ -81,6 +94,18 @@ export async function handleMenu(
       markHandled(target);
       return ok([`${target} marked handled — the watch heads-up skips it for a day.`]);
     }
+    case "brief": {
+      // Same sweep as re-run, but posted where everyone on the call can read
+      // it instead of only the person who pressed it. Read-only.
+      const target = args[0]?.trim();
+      if (!target) return no("Nothing to brief on.");
+      const runUrl = args[1]?.trim();
+      const res = await sweepAll(client, cfg, target);
+      const card = render(target, res);
+      const blocks = [...(card.blocks as unknown[])];
+      if (runUrl) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `<${runUrl}|Replay this sweep in the Lab>` }] });
+      return { ...card, blocks, inChannel: true };
+    }
   }
 }
 
@@ -99,6 +124,12 @@ export async function handleCardAction(cfg: Config, action: CardAction, ctx: Act
   };
   try {
     switch (action.op) {
+      case "add_note": {
+        // The only write whose content comes from the human, so there is
+        // nothing to confirm up front — the modal IS the confirmation.
+        if (!isStr(action.target)) return no("Bad note payload.");
+        return { text: "", openModal: noteModal(action, ctx.responseUrl) };
+      }
       case "claim": {
         if (!isRec(action) || (action.crm !== "salesforce" && action.crm !== "attio")) return no("Bad claim payload.");
         const w = need(action.crm === "salesforce" ? sf() : at(), CRM_LABELS[action.crm]);
@@ -164,6 +195,54 @@ export async function handleCardAction(cfg: Config, action: CardAction, ctx: Act
   } catch (e: any) {
     return no(`Write failed: ${e?.message ?? e}`);
   }
+}
+
+/** The Add-note modal. `private_metadata` carries the record it will land on
+ *  so the submission needs no server-side session. */
+export const NOTE_VIEW_ID = "valentine_note";
+
+function noteModal(a: Extract<CardAction, { op: "add_note" }>, responseUrl?: string): unknown {
+  const where = a.name ? `${a.name} (${a.target})` : a.target;
+  return {
+    type: "modal",
+    callback_id: NOTE_VIEW_ID,
+    private_metadata: JSON.stringify({ target: a.target, ru: responseUrl }),
+    title: { type: "plain_text", text: "Add a note" },
+    submit: { type: "plain_text", text: "Save" },
+    close: { type: "plain_text", text: "Cancel" },
+    blocks: [
+      { type: "context", elements: [{ type: "mrkdwn", text: `Lands on *${where}* — every CRM that knows it.` }] },
+      {
+        type: "input",
+        block_id: "note",
+        label: { type: "plain_text", text: "Note" },
+        element: {
+          type: "plain_text_input",
+          action_id: "text",
+          multiline: true,
+          placeholder: { type: "plain_text", text: "Met Jane at SaaStr — warm, revisit in Q1." },
+        },
+      },
+    ],
+  };
+}
+
+/** A `view_submission` on the Add-note modal → the note, written wherever the
+ *  target is known. Same path as `/valentine note`, so the button and the
+ *  command cannot drift apart. */
+export async function handleNoteSubmission(cfg: Config, client: ModelClient, view: any, ctx: ActionContext = {}): Promise<ActionReply> {
+  let meta: any;
+  try {
+    meta = JSON.parse(view?.private_metadata ?? "{}");
+  } catch {
+    return no("That modal carries nothing Valentine understands.");
+  }
+  const ru: string | undefined = typeof meta?.ru === "string" && meta.ru ? meta.ru : undefined;
+  const postTo = ru ? { postTo: ru } : {};
+  if (!isStr(meta?.target)) return { ...no("Bad note payload."), ...postTo };
+  const text = String(view?.state?.values?.note?.text?.value ?? "").trim();
+  if (!text) return { ...no("Empty note — nothing written."), ...postTo };
+  return { ...(await handleNote(cfg, client, meta.target, text, ctx)), ...postTo };
 }
 
 /** `/valentine note <target> <text…>` — a note on every record the sweep found. */

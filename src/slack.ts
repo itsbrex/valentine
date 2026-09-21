@@ -29,7 +29,8 @@ import { makeClient, type ModelClient } from "./models.js";
 import { sweepAll, CRM_LABELS, type SweepResult } from "./sweep.js";
 import { activeCrms, writesEnabled } from "./config.js";
 import { slashMessage } from "./slackblocks.js";
-import { handleCardAction, handleMenu, handleNote, parseActionValue, type ActionReply } from "./slackactions.js";
+import { handleCardAction, handleMenu, handleNote, handleNoteSubmission, parseActionValue, NOTE_VIEW_ID, type ActionReply } from "./slackactions.js";
+import { slackApi } from "./notify.js";
 import type { Verdict } from "./connectors/types.js";
 
 const DEFAULT_PORT = 3141;
@@ -60,16 +61,21 @@ export function verifySignature(secrets: string, req: Pick<IncomingMessage, "hea
     });
 }
 
-/** A block_actions payload → one reply. Exported for tests; no HTTP here. */
+/** A block_actions or view_submission payload → one reply. Exported for
+ *  tests; no HTTP here. */
 export async function handleInteraction(cfg: Config, client: ModelClient, payload: any): Promise<ActionReply> {
+  const user: string | undefined = payload?.user?.username ?? payload?.user?.name ?? payload?.user?.id;
+  if (payload?.type === "view_submission") {
+    if (payload.view?.callback_id !== NOTE_VIEW_ID) return { text: "⛔ Unsupported modal." };
+    return handleNoteSubmission(cfg, client, payload.view, { user, responseUrl: payload.response_url });
+  }
   if (payload?.type !== "block_actions") return { text: "⛔ Unsupported interaction." };
   const a = payload.actions?.[0];
   const raw: string | undefined = a?.selected_option?.value ?? a?.value;
   const parsed = parseActionValue(raw);
   if (!parsed) return { text: "⛔ That button carries nothing Valentine understands." };
-  const user: string | undefined = payload.user?.username ?? payload.user?.name ?? payload.user?.id;
   if ("menu" in parsed) return handleMenu(cfg, client, parsed.menu, parsed.args);
-  return handleCardAction(cfg, parsed, { user });
+  return handleCardAction(cfg, parsed, { user, responseUrl: payload?.response_url });
 }
 
 /** Verdict → Slack mrkdwn, mirroring the CLI's renderVerdict without ANSI codes. */
@@ -162,9 +168,38 @@ export async function runSlack(cfg: Config, args: string[]): Promise<void> {
         }
         res.writeHead(200).end(); // ack; the outcome follows via response_url
         const responseUrl: string | undefined = payload?.response_url;
-        if (!responseUrl) return;
         const reply = await handleInteraction(cfg, client, payload);
-        await respond(responseUrl, reply.replace ? { replace_original: true, text: reply.text, blocks: reply.blocks } : { replace_original: false, text: reply.text, ...(reply.blocks ? { blocks: reply.blocks } : {}) });
+
+        // A modal is opened with the trigger_id, not answered on response_url.
+        if (reply.openModal) {
+          const token = process.env.VALENTINE_SLACK_BOT_TOKEN;
+          if (!token || !payload?.trigger_id) {
+            if (responseUrl)
+              await respond(responseUrl, {
+                text: token
+                  ? "⛔ Slack sent no trigger_id — the modal cannot be opened."
+                  : "⛔ The Add-note modal needs VALENTINE_SLACK_BOT_TOKEN (a bot token from the SAME app that serves this URL).",
+              });
+            return;
+          }
+          try {
+            await slackApi(token, "views.open", { trigger_id: payload.trigger_id, view: reply.openModal });
+          } catch (e: any) {
+            if (responseUrl) await respond(responseUrl, { text: `⛔ ${e?.message ?? e}` });
+          }
+          return;
+        }
+
+        // A modal submission carries no response_url of its own; it remembers
+        // the card's in private_metadata.
+        const url = responseUrl ?? reply.postTo;
+        if (!url) return;
+        await respond(url, {
+          ...(reply.inChannel ? { response_type: "in_channel" } : {}),
+          ...(reply.replace
+            ? { replace_original: true, text: reply.text, blocks: reply.blocks }
+            : { replace_original: false, text: reply.text, ...(reply.blocks ? { blocks: reply.blocks } : {}) }),
+        });
         return;
       }
 

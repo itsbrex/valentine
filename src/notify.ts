@@ -72,7 +72,7 @@ async function fullscreen(title: string, body: string): Promise<void> {
   await run("osascript", ["-l", "JavaScript", "-e", FULLSCREEN_JXA, title, body, "12"]);
 }
 
-async function slackApi(token: string, method: string, payload: unknown): Promise<any> {
+export async function slackApi(token: string, method: string, payload: unknown): Promise<any> {
   const res = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },

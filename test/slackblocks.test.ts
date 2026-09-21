@@ -277,11 +277,15 @@ test("interactive · state 1: the Attio row gets a green Create button carrying 
   assert.match(create.confirm.text.text, /Company \*FPBA\* and \*Ted Bruenich\* \(fpbarch\.com\), source Salesforce 003C1\./);
   assert.equal(create.confirm.confirm.text, "Create");
   assert.match(text(blocks.find((b) => b.type === "context" && /prefills from/.test(text(b)))), /green button writes them after you confirm/);
-  // ··· menu on the OTHER row
+  // Add note + ··· menu on the OTHER row. The note is card-wide (it lands on
+  // every CRM that knows the target), so it sits here, not on a CRM row.
   const other = rows[2];
-  assert.deepEqual(labelsOf(other), ["Website", "LinkedIn · Ted", "LinkedIn · company", "overflow"]);
+  assert.deepEqual(labelsOf(other), ["Add note", "Website", "LinkedIn · Ted", "LinkedIn · company", "overflow"]);
+  // The name is the record the note actually lands on — here the SF Contact.
+  assert.deepEqual(JSON.parse(els(other)[0].value), { op: "add_note", target: "fpbarch.com", name: "Ted Bruenich" });
+  assert.equal(els(other)[0].confirm, undefined, "the modal is the confirmation");
   const menu = els(other).at(-1);
-  assert.deepEqual(menu.options.map((o: any) => [o.text.text, o.value]), [["Re-run sweep", "rerun|fpbarch.com"], ["Copy SF ID", "copy|SF|003C1"], ["Mute domain 30d", "mute|fpbarch.com"], ["Mark handled", "handled|fpbarch.com"]]);
+  assert.deepEqual(menu.options.map((o: any) => [o.text.text, o.value]), [["Re-run sweep", "rerun|fpbarch.com"], ["Prep brief (share here)", "brief|fpbarch.com|"], ["Copy SF ID", "copy|SF|003C1"], ["Mute domain 30d", "mute|fpbarch.com"], ["Mark handled", "handled|fpbarch.com"]]);
   assert.ok(menu.options.every((o: any) => o.value.length <= 75));
   assert.match(text(blocks.at(-1)), /writes on · every write confirmed/);
   // and without the option, the read-only card is byte-for-byte what it was

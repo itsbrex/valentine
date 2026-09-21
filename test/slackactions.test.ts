@@ -103,3 +103,62 @@ test("calendar links: the conferencing URL is pulled from the URL field, locatio
   assert.equal(joinUrlOf({ link: "https://example.com/agenda", notes: "no call link" }), undefined);
   assert.equal(eventUrl("ABC-123:xyz"), "ical://ekevent/ABC-123%3Axyz?method=show&options=more");
 });
+
+// ─── w09: the Add-note modal and the shared brief ───────────────────────────
+
+test("add_note opens a modal instead of writing — it carries the target and the card's response_url", async () => {
+  process.env.VALENTINE_WRITES = "1";
+  const r = await handleCardAction(cfg(), { op: "add_note", target: "acme.com", name: "Acme" }, { responseUrl: "https://hooks.slack.test/r/1" });
+  assert.ok(r.openModal, "a modal, not a write");
+  const v: any = r.openModal;
+  assert.equal(v.callback_id, "valentine_note");
+  assert.deepEqual(JSON.parse(v.private_metadata), { target: "acme.com", ru: "https://hooks.slack.test/r/1" });
+  assert.equal(v.blocks[1].element.action_id, "text");
+  assert.ok(v.blocks[1].element.multiline);
+});
+
+test("add_note is refused outright when writes are off — no modal is opened", async () => {
+  const r = await handleCardAction(cfg(), { op: "add_note", target: "acme.com" });
+  assert.equal(r.openModal, undefined);
+  assert.match(r.text, /Writes are off/);
+});
+
+test("the modal's submission is routed to the note path and answers on the card's response_url", async () => {
+  process.env.VALENTINE_WRITES = "1";
+  const payload = {
+    type: "view_submission",
+    user: { username: "brian" },
+    view: {
+      callback_id: "valentine_note",
+      private_metadata: JSON.stringify({ target: "acme.com", ru: "https://hooks.slack.test/r/1" }),
+      state: { values: { note: { text: { value: "  Met Jane at SaaStr — warm.  " } } } },
+    },
+  };
+  // No CRM key on this config, so the sweep finds nothing and the note path
+  // says so — what matters here is the routing and where the answer goes.
+  const r = await handleInteraction(cfg(), noModel, payload);
+  assert.equal(r.postTo, "https://hooks.slack.test/r/1", "a view_submission carries no response_url of its own");
+  assert.ok(r.text.length > 0);
+});
+
+test("an empty note writes nothing, and an unknown modal is not answered", async () => {
+  process.env.VALENTINE_WRITES = "1";
+  const view = { callback_id: "valentine_note", private_metadata: JSON.stringify({ target: "acme.com" }), state: { values: { note: { text: { value: "   " } } } } };
+  const r = await handleInteraction(cfg(), noModel, { type: "view_submission", view });
+  assert.match(r.text, /Empty note/);
+
+  const other = await handleInteraction(cfg(), noModel, { type: "view_submission", view: { callback_id: "something_else" } });
+  assert.match(other.text, /Unsupported modal/);
+});
+
+test("the ··· menu's Prep brief posts in channel and appends the Lab replay link", async () => {
+  const render = (t: string) => ({ text: `card for ${t}`, blocks: [{ type: "section", text: { type: "mrkdwn", text: t } }] });
+  const r = await handleMenu(cfg(), noModel, "brief", ["acme.com", "https://lab.test/?run=abc"], render as any);
+  assert.equal(r.inChannel, true, "the point is that the channel sees it");
+  assert.equal(r.replace, undefined, "it adds a message, it does not replace the card");
+  assert.match(JSON.stringify(r.blocks!.at(-1)), /Replay this sweep in the Lab/);
+
+  // …and without a run link it is just the card, shared.
+  const bare = await handleMenu(cfg(), noModel, "brief", ["acme.com", ""], render as any);
+  assert.equal(bare.blocks!.length, 1);
+});

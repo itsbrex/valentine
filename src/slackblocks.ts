@@ -141,10 +141,14 @@ export type CardAction =
   | { op: "claim"; crm: "salesforce" | "attio"; object: "companies" | "people"; id: string }
   | { op: "crosslink"; sf: { object: "companies" | "people"; id: string; url?: string }; attio: { object: "companies" | "people"; id: string; url?: string } }
   | { op: "attio_rematch"; domain: string; id: string; name: string; note?: string }
-  | { op: "log_meeting"; title: string; start?: number; targets: { crm: "salesforce" | "attio"; object: "companies" | "people"; id: string }[] };
+  | { op: "log_meeting"; title: string; start?: number; targets: { crm: "salesforce" | "attio"; object: "companies" | "people"; id: string }[] }
+  /** Opens a modal rather than writing directly — the text comes from the
+   *  human, so there is nothing to confirm up front. Lands on every CRM that
+   *  knows the target, the same rule as `/valentine note`. */
+  | { op: "add_note"; target: string; name?: string };
 
-/** The ··· menu ops (`op|arg`). */
-export type MenuOp = "rerun" | "copy" | "mute" | "handled";
+/** The ··· menu ops (`op|arg`). All read-only. */
+export type MenuOp = "rerun" | "copy" | "mute" | "handled" | "brief";
 export const menuValue = (op: MenuOp, ...args: string[]): string => [op, ...args].join("|");
 
 function fieldsBlock(items: { label: string; value: string }[]): Block | undefined {
@@ -213,6 +217,9 @@ export interface CardOptions {
   /** Set when `valentine slack` will answer the card's interactive elements.
    *  `writes` adds the write-through buttons on top of the local-only menu. */
   interactive?: { writes: boolean };
+  /** Lab replay link for this sweep, carried into "Prep brief" so the shared
+   *  copy can point back at the run it came from. */
+  runUrl?: string;
 }
 
 /** The record ids a write needs, from a source verdict. */
@@ -337,10 +344,20 @@ export function targetBlocks(target: string, res: SweepResult, idPrefix: string,
           confirm: { title: "Create in both CRMs?", text: `Lead *${esc(seed.name ?? domain)}* in Salesforce and company *${esc(seed.name ?? domain)}* in Attio, each noting the other's link.`, ok: "Create both" },
         });
     }
+    // One note for the whole card: it lands on every CRM that knows the
+    // target, so it belongs next to the shared links rather than on a CRM row.
+    if (writes && found.length)
+      other.unshift({
+        label: "Add note",
+        action: { op: "add_note", target, ...(found[0].facts?.matchName ? { name: found[0].facts!.matchName } : {}) },
+      });
     if (ia) {
       const sf = res.sources.find((s) => s.crm === "salesforce");
       const at = res.sources.find((s) => s.crm === "attio");
-      const menu: { label: string; value: string }[] = [{ label: "Re-run sweep", value: menuValue("rerun", target) }];
+      const menu: { label: string; value: string }[] = [
+        { label: "Re-run sweep", value: menuValue("rerun", target) },
+        { label: "Prep brief (share here)", value: menuValue("brief", target, opts.runUrl ?? "") },
+      ];
       if (sf?.citations[0]) menu.push({ label: "Copy SF ID", value: menuValue("copy", "SF", sf.citations[0]) });
       if (at?.citations[0]) menu.push({ label: "Copy Attio ID", value: menuValue("copy", "Attio", at.citations[0]) });
       if (/\./.test(domain)) menu.push({ label: "Mute domain 30d", value: menuValue("mute", domain) });
@@ -688,7 +705,7 @@ export function meetingMessage(
 /** The slash-command reply (and the `--notify` DM) for one target. */
 export function slashMessage(target: string, res: SweepResult, meta: FooterMeta, opts: Pick<CardOptions, "interactive"> = {}): { text: string; blocks: Block[] } {
   const v = res.combined;
-  const { blocks, says } = targetBlocks(target, res, "s", opts);
+  const { blocks, says } = targetBlocks(target, res, "s", { ...opts, ...(meta.runUrl ? { runUrl: meta.runUrl } : {}) });
   const s = saysBlock(says);
   if (s) blocks.push(s);
   blocks.push(footer(res, { ...meta, elapsedMs: meta.elapsedMs ?? res.elapsedMs }));
