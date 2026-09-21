@@ -525,6 +525,19 @@ pre.out{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--
 .slack .acts a.danger{border-color:#e01e5a;color:#e01e5a}
 .slack code{background:#2c2d30;border:1px solid #3a3d42;border-radius:3px;padding:0 3px;font-size:12px;color:#e8912d}
 .slack a.lnk{color:#1d9bd1;text-decoration:none}
+/* simulate click — the preview's own ··· menu drives the real endpoint */
+.slack .ovf{position:relative;display:inline-block}
+.slack .ovf-m{display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:6;min-width:200px;padding:4px;background:#1a1d21;border:1px solid #3a3d42;border-radius:6px;box-shadow:0 10px 26px rgba(0,0,0,.5)}
+.slack .ovf.open .ovf-m{display:block}
+.slack .ovf-m a{display:block;border:0;padding:6px 10px;font-weight:500;font-size:13px;border-radius:4px;white-space:nowrap}
+[data-theme=paper] .slack .ovf-m{background:#fff;border-color:#ddd;box-shadow:0 10px 26px rgba(0,0,0,.14)}
+.slack .acts a.sim{cursor:pointer}
+.slack .acts a.sim-no{cursor:not-allowed}
+.sim-bar{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin:8px 0 0;font-family:var(--mono);font-size:11px;color:var(--txt-3);max-width:720px}
+.sim-bar b{color:var(--txt-2);font-weight:600}
+.sim-bar.off b{color:var(--warn)}
+.sim-out:not(:empty){margin-top:8px;max-width:720px}
+.sim-out .verdict-line{margin:8px 0 6px}
 /* bench */
 .bars{display:grid;gap:6px;font-family:var(--mono);font-size:11.5px}
 .bars .b{display:grid;grid-template-columns:260px 1fr 90px;gap:10px;align-items:center}
@@ -1094,6 +1107,7 @@ async function loadEnv() {
     '<span class="pill"><span class="led" style="background:var(--info)"></span> CRMs: <b>' + e.config.crms.map(h).join(' + ') + '</b></span>' +
     '<span class="pill"><span class="led" style="background:var(--info)"></span> default: <b>' + h(short(e.config.model)) + '</b> · ' + h(e.config.strategy) + '</span>' +
     '<span class="pill ' + (e.slack.dm ? 'ok' : 'warn') + '"><span class="led"></span> Slack DM ' + (e.slack.dm ? 'configured' : 'not configured') + '</span>' +
+    (e.slack.simulate ? '<span class="pill ' + (e.slack.simulate.ready ? 'ok' : 'warn') + '" title="' + h(e.slack.simulate.reason || 'signs a real block_actions and POSTs it to the local valentine slack') + '"><span class="led"></span> Slack sim ' + (e.slack.simulate.ready ? 'ready · :' + h(e.slack.simulate.port) : 'off') + '</span>' : '') +
     (e.config.missing.length ? '<span class="pill err"><span class="led"></span> missing creds: ' + e.config.missing.map(h).join(', ') + '</span>' : '');
   $('meta').textContent = 'valentine ' + e.version + ' · ' + e.config.crms.join(' + ') + ' · ' + short(e.config.model);
 
@@ -1220,6 +1234,21 @@ function mrk(s) {
   t = t.replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|\s)_([^_\n]+)_/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
   return t.replace(/\n/g, '<br>');
 }
+/* The ··· menu ops the lab is allowed to press for real — kept in step with
+   the server's allowlist (src/slackactions.ts parses these; none reaches a
+   CRM). A write button's value is CardAction JSON and stays unpressed. */
+const SIM_OPS = ['rerun', 'copy', 'mute', 'handled'];
+const simOk = v => SIM_OPS.includes(String(v || '').split('|')[0]);
+const simAttrs = (aid, val, label, kind) =>
+  ' data-sim="' + kind + '" data-aid="' + h(aid || '') + '" data-val="' + h(val || '') + '" data-label="' + h(label || '') + '"';
+/* The strip under each card that says what pressing a button will really do. */
+function simBar() {
+  const s = LAB.env && LAB.env.slack && LAB.env.slack.simulate;
+  if (!s) return '<div class="sim-bar off"><b>Simulate click — off</b><span>lab environment not loaded</span></div>';
+  if (!s.ready) return '<div class="sim-bar off"><b>Simulate click — off</b><span>' + h(s.reason || 'unavailable') + '</span></div>';
+  return '<div class="sim-bar"><b>Simulate click</b><span>a ··· option signs a real block_actions and POSTs it to <code>valentine slack</code> on :' + h(s.port) + '</span>' +
+    '<span>' + h((s.ops || SIM_OPS).join(' · ')) + ' only — write buttons stay unpressed</span></div>';
+}
 function slackHtml(blocks, text) {
   const inner = (blocks || []).map(b => {
     if (b.type === 'header') return '<div class="hdr">' + h(b.text.text) + '</div>';
@@ -1227,11 +1256,20 @@ function slackHtml(blocks, text) {
     if (b.type === 'context') return '<div class="ctx">' + (b.elements || []).filter(e => e && e.text).map(e => mrk(e.text)).join(' ') + '</div>';
     if (b.type === 'actions') return '<div class="acts">' + (b.elements || []).map(e => {
       // v2 card: link buttons (url), write/menu buttons (action_id, no url) and the ··· overflow menu.
-      if (e.type === 'overflow') return '<a href="#" onclick="return false" title="' + h((e.options || []).map(o => o.text && o.text.text).filter(Boolean).join(' · ')) + '">···</a>';
+      if (e.type === 'overflow') {
+        const opts = (e.options || []).map(o => {
+          const lbl = (o.text && o.text.text) || o.value || '';
+          return simOk(o.value)
+            ? '<a class="sim" href="#"' + simAttrs(e.action_id, o.value, lbl, 'overflow') + ' title="simulate — POSTs `' + h(o.value) + '` to valentine slack">' + h(lbl) + '</a>'
+            : '<a class="sim-no" href="#" onclick="return false" title="not simulated — this one can reach the CRM">' + h(lbl) + '</a>';
+        }).join('');
+        return '<span class="ovf"><a class="ovf-t" href="#" title="' + h((e.options || []).map(o => o.text && o.text.text).filter(Boolean).join(' · ')) + '">···</a><span class="ovf-m">' + opts + '</span></span>';
+      }
       const label = e.text && e.text.text ? e.text.text : (e.action_id || e.type || '');
-      const cls = e.style === 'primary' ? ' class="primary"' : e.style === 'danger' ? ' class="danger"' : '';
-      if (e.url) return '<a' + cls + ' href="' + h(e.url) + '" target="_blank" rel="noopener">' + h(label) + '</a>';
-      return '<a' + cls + ' href="#" onclick="return false" title="' + h(e.action_id || '') + '">' + h(label) + '</a>';
+      const cls = e.style === 'primary' ? 'primary' : e.style === 'danger' ? 'danger' : '';
+      if (e.url) return '<a' + (cls ? ' class="' + cls + '"' : '') + ' href="' + h(e.url) + '" target="_blank" rel="noopener">' + h(label) + '</a>';
+      if (simOk(e.value)) return '<a class="' + (cls ? cls + ' ' : '') + 'sim" href="#"' + simAttrs(e.action_id, e.value, label, 'button') + ' title="simulate — POSTs `' + h(e.value) + '` to valentine slack">' + h(label) + '</a>';
+      return '<a class="' + (cls ? cls + ' ' : '') + 'sim-no" href="#" onclick="return false" title="' + h(e.action_id || '') + ' — write button, not simulated (the endpoint would write to the CRM)">' + h(label) + '</a>';
     }).join('') + '</div>';
     if (b.type === 'section') {
       let s = '';
@@ -1242,7 +1280,58 @@ function slackHtml(blocks, text) {
     return '<div class="sec muted">' + h(b.type) + '</div>';
   }).join('');
   const now = new Date();
-  return '<div class="slack"><div class="who"><div class="av">✦</div><div><span class="nm">Valentine</span><span class="app">APP</span><span class="ts">' + now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '</span></div></div>' + (inner || '<div class="sec">' + mrk(text || '') + '</div>') + '</div>';
+  return '<div class="sim-wrap"><div class="slack"><div class="who"><div class="av">✦</div><div><span class="nm">Valentine</span><span class="app">APP</span><span class="ts">' + now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '</span></div></div>' +
+    (inner || '<div class="sec">' + mrk(text || '') + '</div>') + '</div>' + simBar() + '<div class="sim-out"></div></div>';
+}
+
+/* ---- simulate a card click -------------------------------------------- */
+/* Slack's Interactivity URL isn't wired up yet, so nothing on the card can be
+   pressed from Slack. The lab server signs a real block_actions payload (v0
+   HMAC over `v0:<ts>:<body>`), POSTs it to `valentine slack`, and hands back
+   the ack plus whatever that server sent to the response_url. */
+async function simulateClick(el) {
+  const s = (LAB.env && LAB.env.slack && LAB.env.slack.simulate) || {};
+  const wrap = el.closest('.sim-wrap');
+  const out = wrap && wrap.querySelector('.sim-out');
+  const label = el.dataset.label || el.dataset.val || '';
+  if (!s.ready) { toast('Simulate click is off — ' + h(s.reason || 'no signing secret'), 'error'); return; }
+  const head = (k, right) => '<div class="verdict-line"><span class="k">' + k + '</span><span class="exit">' + right + '</span></div>';
+  if (out) out.innerHTML = head('Simulate click', h(label) + ' → :' + h(s.port) + ' …');
+  log(null, 'ok', 'simulate', '<b>' + h(label) + '</b> → signed block_actions → valentine slack :' + h(s.port));
+  const t0 = Date.now();
+  let j;
+  try {
+    const r = await fetch(API + '/api/simulate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action_id: el.dataset.aid, value: el.dataset.val, label, kind: el.dataset.sim }),
+    });
+    j = await r.json();
+    if (!r.ok) throw new Error(j.error || ('lab server said ' + r.status));
+  } catch (err) {
+    if (out) out.innerHTML = head('Simulate click', 'failed') + '<pre class="out">' + h(err.message) + '</pre>';
+    log(null, 'err', 'simulate', h(err.message));
+    toast('Simulate: ' + h(err.message), 'error');
+    return;
+  }
+  const ms = Date.now() - t0;
+  if (!j.reached) {
+    const hint = j.code === 'ECONNREFUSED' ? ' — start it with <code>valentine slack</code>' : '';
+    if (out) out.innerHTML = head('Simulate click', 'no answer · ' + fmtMs(ms)) + '<pre class="out">' + h(j.error) + '</pre>';
+    log(null, 'err', 'simulate', h(j.error) + hint);
+    toast(h(j.error), 'error');
+    return;
+  }
+  const ack = j.ack || {};
+  const verdict = ack.status === 200 ? 'signature verified · dispatched' : ack.status === 401 ? 'signature REJECTED' : 'HTTP ' + ack.status;
+  const body = { ack: ack, reply: j.reply, timedOut: j.timedOut, replyMs: j.replyMs };
+  let html = head('Simulate click · ' + h(label), 'HTTP ' + h(ack.status) + ' · ack ' + fmtMs(ack.ms) + ' · round-trip ' + fmtMs(j.elapsedMs)) +
+    '<pre class="out">' + h(verdict + (j.timedOut ? ' · no reply on the response_url within the timeout' : '')) + '\n\n' + h(JSON.stringify(body, null, 2)) + '</pre>';
+  // `rerun` answers with replace_original — that is the card Slack would swap in.
+  if (j.reply && j.reply.blocks) html += head('card the endpoint replied with', h(j.reply.replace_original ? 'replace_original' : 'ephemeral')) + slackHtml(j.reply.blocks, j.reply.text);
+  if (out) out.innerHTML = html;
+  log(null, ack.status === 200 ? 'ok' : 'err', 'simulate', h(verdict) + ' · ack ' + fmtMs(ack.ms) +
+    (j.reply ? ' · reply ' + fmtMs(j.replyMs) + ': ' + h(String(j.reply.text || '').split('\n')[0].slice(0, 160)) : j.timedOut ? ' · no reply' : ''));
+  toast(ack.status === 200 ? 'Round-trip ok · ' + fmtMs(j.elapsedMs) : 'Endpoint said HTTP ' + h(ack.status), ack.status === 200 ? 'success' : 'error');
 }
 
 /* ---- run plumbing ----------------------------------------------------- */
@@ -1552,6 +1641,25 @@ function appKeydown(e) {
   if (replay && /^[\w-]+$/.test(replay)) setTimeout(() => replayRun(replay), 0);
   document.querySelectorAll('.tabs .tab').forEach(t => t.onclick = () => setScenario(t.dataset.sc));
   document.querySelectorAll('.rtabs .chip').forEach(c => c.onclick = () => showPane(c.dataset.rp));
+  // Slack preview: the ··· menu opens, its safe options fire a real signed POST.
+  $('paneSlack').addEventListener('click', e => {
+    const a = e.target.closest('a');
+    if (!a) return;
+    if (a.classList.contains('ovf-t')) {
+      e.preventDefault();
+      const ovf = a.closest('.ovf');
+      document.querySelectorAll('.slack .ovf.open').forEach(o => { if (o !== ovf) o.classList.remove('open'); });
+      ovf.classList.toggle('open');
+    } else if (a.dataset.sim) {
+      e.preventDefault();
+      const ovf = a.closest('.ovf'); if (ovf) ovf.classList.remove('open');
+      simulateClick(a);
+    } else if (a.classList.contains('sim-no')) {
+      e.preventDefault();
+      toast('Not simulated — this button writes to the CRM', 'info');
+    }
+  });
+  document.addEventListener('click', e => { if (!e.target.closest('.ovf')) document.querySelectorAll('.slack .ovf.open').forEach(o => o.classList.remove('open')); });
   document.addEventListener('click', e => {
     const c = e.target.closest('.chip');
     if (!c) return;

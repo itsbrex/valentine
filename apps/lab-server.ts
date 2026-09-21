@@ -14,7 +14,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 
 import { loadConfig, activeCrms, writesEnabled, type Config } from "../src/config.js";
 import { makeClient, OLLAMA_MODELS, DEFAULT_OLLAMA_HOST, type ModelClient } from "../src/models.js";
@@ -63,6 +63,8 @@ interface Run {
 const runs = new Map<string, Run>();
 /** Where this lab is reachable — the Slack footer's "run <id>" link points at `${labUrl}/?run=<id>`. */
 let labUrl: string | undefined;
+/** The port actually bound (portless hands out PORT=0) — the simulated card's `response_url` comes back here. */
+let labPort = 0;
 const runLink = (run: Run) => ({ runId: run.id.slice(0, 8), runUrl: labUrl ? `${labUrl}/?run=${run.id}` : undefined });
 
 function emit(run: Run, type: string, data: Record<string, unknown> = {}): void {
@@ -261,6 +263,176 @@ async function runMeeting(run: Run, body: { withinMinutes?: number; title?: stri
   emit(run, "done", {});
 }
 
+// ------------------------------------------------------- simulate a card click
+//
+// The Slack app's Interactivity Request URL isn't wired up yet, so the card's
+// ··· menu can't be pressed from Slack. This signs a real `block_actions`
+// payload exactly the way Slack does — v0 HMAC-SHA256 over `v0:<ts>:<raw body>`
+// with the signing secret — POSTs it to the local `valentine slack`, and waits
+// for the reply that server sends back through `response_url`, which points at
+// this lab. That exercises signature verification, dispatch and the reply path
+// with Slack out of the loop. Nothing is faked: a bad secret gets a real 401.
+//
+// Only the ··· menu ops are simulatable (`rerun` · `copy` · `mute` ·
+// `handled`): re-run and copy are read-only, mute/handled touch local state in
+// ~/.valentine/mutes.json, and none of them reaches a CRM. A write button's
+// value is a `CardAction` JSON and is refused here — with writes switched on,
+// `valentine slack` would really write to Salesforce/Attio, and the lab stays
+// read-only.
+
+const DEFAULT_SLACK_PORT = 3141;
+const SIM_MENU_OPS = new Set(["rerun", "copy", "mute", "handled"]);
+/** How long to wait for `response_url` — a `rerun` runs a whole sweep. */
+const SIM_REPLY_MS = 45_000;
+
+/** Pending `response_url` callbacks, keyed by the id in the URL we handed out. */
+const simReplies = new Map<string, (body: unknown) => void>();
+
+const slackPort = (): number => Number(process.env.VALENTINE_SLACK_PORT || DEFAULT_SLACK_PORT);
+
+/** What the page needs to decide whether the control is usable, and why not. */
+function simState(): Record<string, unknown> {
+  const cfg = loadConfig();
+  const secret = !!cfg.slackSigningSecret?.trim();
+  return {
+    ready: secret,
+    secret,
+    port: slackPort(),
+    writes: writesEnabled(cfg),
+    ops: [...SIM_MENU_OPS],
+    reason: secret ? undefined : "no signing secret — set VALENTINE_SLACK_SIGNING_SECRET (or SLACK_SIGNING_SECRET) and reload",
+  };
+}
+
+interface SimBody {
+  action_id?: string;
+  value?: string;
+  label?: string;
+  /** "overflow" puts the value in `selected_option`, like Slack does. */
+  kind?: string;
+  block_id?: string;
+}
+
+async function simulate(body: SimBody): Promise<{ code: number; out: Record<string, unknown> }> {
+  const cfg = loadConfig();
+  // `valentine slack` accepts a comma-separated list (two Slack apps); sign
+  // with the first, which is the one the slash command uses.
+  const secret = (cfg.slackSigningSecret ?? "").split(",")[0].trim();
+  if (!secret) return { code: 409, out: { ok: false, error: simState().reason } };
+
+  const actionId = String(body.action_id ?? "").trim();
+  const value = String(body.value ?? "").trim();
+  if (!actionId || !value) return { code: 400, out: { ok: false, error: "action_id and value required" } };
+  if (!SIM_MENU_OPS.has(value.split("|")[0]))
+    return {
+      code: 400,
+      out: {
+        ok: false,
+        error: `only the ··· menu ops are simulatable (${[...SIM_MENU_OPS].join(" · ")}) — a write button would reach the CRM`,
+      },
+    };
+
+  const port = slackPort();
+  const id = randomUUID().slice(0, 8);
+  const ts = Math.floor(Date.now() / 1000);
+  const stamp = `${ts}.000100`;
+  const label = body.label || value;
+  const overflow = body.kind === "overflow";
+  const payload = {
+    type: "block_actions",
+    token: "valentine-lab-simulated",
+    user: { id: "U0LAB", username: "valentine-lab", name: "valentine-lab", team_id: "T0LAB" },
+    api_app_id: "A0LAB",
+    team: { id: "T0LAB", domain: "valentine-lab" },
+    container: { type: "message", message_ts: stamp, channel_id: "D0LAB", is_ephemeral: true },
+    channel: { id: "D0LAB", name: "directmessage" },
+    message: { type: "message", ts: stamp, text: "Valentine card — simulated from the Lab" },
+    trigger_id: `${ts}.lab.${id}`,
+    response_url: `http://127.0.0.1:${labPort}/api/simulate/reply/${id}`,
+    actions: [
+      {
+        type: overflow ? "overflow" : "button",
+        action_id: actionId,
+        block_id: body.block_id || "lab_sim",
+        action_ts: stamp,
+        ...(overflow
+          ? { selected_option: { text: { type: "plain_text", text: label }, value } }
+          : { text: { type: "plain_text", text: label }, value }),
+      },
+    ],
+  };
+  const raw = `payload=${encodeURIComponent(JSON.stringify(payload))}`;
+  const signature = `v0=${createHmac("sha256", secret).update(`v0:${ts}:${raw}`).digest("hex")}`;
+
+  // Register the callback before the POST — the ack can beat the await.
+  const t0 = Date.now();
+  let settle: (v: { body: unknown; ms: number } | undefined) => void = () => {};
+  const replied = new Promise<{ body: unknown; ms: number } | undefined>((resolve) => (settle = resolve));
+  const timer = setTimeout(() => {
+    simReplies.delete(id);
+    settle(undefined);
+  }, SIM_REPLY_MS);
+  timer.unref?.();
+  const cancel = () => {
+    clearTimeout(timer);
+    simReplies.delete(id);
+    settle(undefined);
+  };
+  simReplies.set(id, (b) => {
+    clearTimeout(timer);
+    simReplies.delete(id);
+    settle({ body: b, ms: Date.now() - t0 });
+  });
+
+  let ack: { status: number; body: string; ms: number };
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Slack-Request-Timestamp": String(ts),
+        "X-Slack-Signature": signature,
+      },
+      body: raw,
+    });
+    ack = { status: r.status, body: (await r.text()).slice(0, 2000), ms: Date.now() - t0 };
+  } catch (e: any) {
+    cancel();
+    const code = e?.cause?.code ?? e?.code;
+    return {
+      code: 200,
+      out: {
+        ok: false,
+        reached: false,
+        port,
+        code,
+        error: code === "ECONNREFUSED" ? `valentine slack is not running on :${port}` : String(e?.message ?? e),
+        elapsedMs: Date.now() - t0,
+        payload,
+      },
+    };
+  }
+
+  // Only a verified request gets acked with 200; anything else never calls back.
+  if (ack.status !== 200) cancel();
+  const reply = await replied;
+  return {
+    code: 200,
+    out: {
+      ok: ack.status === 200,
+      reached: true,
+      verified: ack.status !== 401,
+      port,
+      ack,
+      reply: reply?.body ?? null,
+      replyMs: reply?.ms ?? null,
+      timedOut: ack.status === 200 && !reply,
+      elapsedMs: Date.now() - t0,
+      payload,
+    },
+  };
+}
+
 // ---------------------------------------------------------------- state
 
 async function ollamaJson(host: string, path: string): Promise<any> {
@@ -297,7 +469,7 @@ async function state(): Promise<Record<string, unknown>> {
     version: VERSION,
     config: { crms: activeCrms(cfg), provider: cfg.provider, model: cfg.model, strategy: cfg.strategy ?? "brief", ollamaHost: host, missing: missingCrmCreds(cfg) },
     ollama: { reachable: !!tags, models, loaded: (ps?.models ?? []).map((m: any) => ({ name: m.name, vram: m.size_vram, until: m.expires_at, ctx: m.context_length })) },
-    slack: { dm: !!(process.env.VALENTINE_SLACK_BOT_TOKEN && process.env.VALENTINE_SLACK_DM_USER) },
+    slack: { dm: !!(process.env.VALENTINE_SLACK_BOT_TOKEN && process.env.VALENTINE_SLACK_DM_USER), simulate: simState() },
     benchCases: BENCH_CASES.map((c) => ({ target: c.target, crm: c.crm })),
     knownModels: OLLAMA_MODELS,
     runs: [...runs.values()].map((r) => ({ id: r.id, kind: r.kind, startedAt: r.startedAt, done: r.done, events: r.events.length })),
@@ -364,6 +536,22 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // A card button pressed in the lab's Slack preview: sign, POST to
+    // `valentine slack`, report the round-trip. Menu ops only — see above.
+    if (req.method === "POST" && url.pathname === "/api/simulate") {
+      const { code, out } = await simulate(await readBody(req));
+      return json(res, code, out);
+    }
+    // …and the other half of the trip: `valentine slack` answers through the
+    // `response_url` we handed it, which is this.
+    const back = /^\/api\/simulate\/reply\/([\w-]+)$/.exec(url.pathname);
+    if (req.method === "POST" && back) {
+      const waiting = simReplies.get(back[1]);
+      const body = await readBody(req);
+      if (waiting) waiting(body);
+      return json(res, 200, { ok: !!waiting });
+    }
+
     if (req.method === "POST" && url.pathname === "/api/notify") {
       const body = await readBody(req);
       if (!body.text) return json(res, 400, { error: "text required" });
@@ -388,6 +576,7 @@ const port = Number(process.env.PORT || 0);
 const host = process.env.HOST || "127.0.0.1";
 server.listen(port, host, () => {
   const addr = server.address();
+  if (typeof addr === "object" && addr) labPort = addr.port;
   const where = process.env.PORTLESS_URL ?? (typeof addr === "object" && addr ? `http://${host}:${addr.port}` : "?");
   if (where !== "?") labUrl = where.replace(/\/+$/, "");
   console.log(`✦ valentine lab ${VERSION} · ${where} · read-only`);
