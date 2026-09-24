@@ -507,6 +507,7 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
   <div class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-tab="query">Query</button>
     <button role="tab" aria-selected="false" data-tab="bulk">Bulk domain check</button>
+    <button role="tab" aria-selected="false" data-tab="files">Load CSV</button>
   </div>
 
   <main>
@@ -547,6 +548,20 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
       </div>
       <div class="panel" id="bulkGridPanel" hidden></div>
     </section>
+
+    <!-- LOAD CSV -->
+    <section id="tab-files" hidden>
+      <div class="panel">
+        <div class="row" style="margin:0 0 8px"><b style="font-size:13px">Load a CSV from review-local/</b>
+          <span class="stat">the exports live in the repo's gitignored review folder; served read-only, this machine only.</span>
+          <div class="spacer"></div><button class="gbtn" id="filesRefresh">Refresh</button></div>
+        <div class="presets" id="fileList"></div>
+        <div class="err" id="filesErr"></div>
+        <span class="stat" id="filesStat"></span>
+      </div>
+      <div class="panel" id="filesGridPanel" hidden></div>
+      <div class="panel" id="filesFrMount" hidden></div>
+    </section>
   </main>
 
   <div class="foot"><span id="footStat">read-only console</span><span>valentine · crm-playground</span></div>
@@ -578,6 +593,16 @@ function sfObjectOf(id){ if(typeof id!=="string")return null; if(!/^[a-zA-Z0-9]{
 function linkify(col,val,raw,kind){
   if(val==null||val==="")return null;
   const sv=String(val);
+  if(kind==="csv"){
+    // a loaded CSV: link anything that points back to a record or the web.
+    const inst=CFG.salesforce&&CFG.salesforce.instance;
+    const asId=sfObjectOf(sv); if(asId&&inst)return `${inst}/lightning/r/${asId}/${sv}/view`;
+    if(/^https?:\/\//.test(sv))return sv;                                   // web_url, any url column
+    if(/(^|_)domain$|website/i.test(col)&&/\./.test(sv))return "https://"+sv.replace(/^https?:\/\//,"");
+    if(/linkedin/i.test(col)&&/\./.test(sv))return "https://"+sv.replace(/^https?:\/\//,"");
+    if(/email/i.test(col)&&sv.includes("@"))return "mailto:"+sv;
+    return null;
+  }
   if(kind==="attio"){
     if(col==="web_url"&&/^https?:/.test(sv))return sv;
     if(col==="id"&&CFG.attio&&CFG.attio.slug){const obj=(raw&&raw.__object==="people")?"person":"company";return `https://app.attio.com/${CFG.attio.slug}/${obj}/${sv}`;}
@@ -743,8 +768,8 @@ class Grid{
 }
 
 /* ---------- Find & Replace panel (operates on a grid, exports a change-set) ---------- */
-function mountFindReplace(grid){
-  const p=$("frPanel"); p.hidden=false;
+function mountFindReplace(grid,mountId){
+  const p=$(mountId||"frPanel"); p.hidden=false;
   p.innerHTML=`<div class="row" style="margin:0 0 8px"><b style="font-size:13px">Find &amp; replace — data hygiene</b>
     <span class="stat">edits the loaded rows locally and exports a reviewed change-set. Never writes to the CRM.</span></div>
   <div class="fr">
@@ -758,27 +783,28 @@ function mountFindReplace(grid){
     <button class="gbtn" id="frRevert">Revert all edits</button><div class="spacer"></div>
     <button class="btn-ghost" id="frExport">Export change-set CSV</button></div>
   <div class="frprev" id="frPrev"></div>`;
-  const cols=grid.cols; const sel=$("frCol"); sel.innerHTML='<option value="__all">(all visible columns)</option>'+cols.map(c=>`<option>${c}</option>`).join("");
-  function scopeIdx(){const s=$("frScope").value; if(s==="all")return grid.rows.map((_,i)=>i); if(s==="selected")return[...grid.sel]; return grid.view();}
-  function targetCols(){const c=$("frCol").value; return c==="__all"?grid.cols.filter(x=>grid.vis.has(x)):[c];}
-  function matcher(){const f=$("frFind").value; if(!f)return null; if($("frRe").checked){try{return new RegExp(f,$("frCase").checked?"g":"gi");}catch(e){toast("bad regex");return null;}} return {lit:f,ci:!$("frCase").checked};}
-  function apply(cell){const m=matcher(); if(m==null)return null; const rep=$("frRepl").value; const whole=$("frWhole").checked; const s=cell==null?"":String(cell);
-    if(whole){const hit=(m.lit!=null)?(m.ci?s.toLowerCase()===m.lit.toLowerCase():s===m.lit):new RegExp("^(?:"+$("frFind").value+")$",$("frCase").checked?"":"i").test(s); return hit?rep:null;}
+  const el=(sel)=>p.querySelector(sel);
+  const cols=grid.cols; const sel=el("#frCol"); sel.innerHTML='<option value="__all">(all visible columns)</option>'+cols.map(c=>`<option>${c}</option>`).join("");
+  function scopeIdx(){const s=el("#frScope").value; if(s==="all")return grid.rows.map((_,i)=>i); if(s==="selected")return[...grid.sel]; return grid.view();}
+  function targetCols(){const c=el("#frCol").value; return c==="__all"?grid.cols.filter(x=>grid.vis.has(x)):[c];}
+  function matcher(){const f=el("#frFind").value; if(!f)return null; if(el("#frRe").checked){try{return new RegExp(f,el("#frCase").checked?"g":"gi");}catch(e){toast("bad regex");return null;}} return {lit:f,ci:!el("#frCase").checked};}
+  function apply(cell){const m=matcher(); if(m==null)return null; const rep=el("#frRepl").value; const whole=el("#frWhole").checked; const s=cell==null?"":String(cell);
+    if(whole){const hit=(m.lit!=null)?(m.ci?s.toLowerCase()===m.lit.toLowerCase():s===m.lit):new RegExp("^(?:"+el("#frFind").value+")$",el("#frCase").checked?"":"i").test(s); return hit?rep:null;}
     if(m.lit!=null){const idx=m.ci?s.toLowerCase().indexOf(m.lit.toLowerCase()):s.indexOf(m.lit); if(idx<0)return null; // literal replace-all
       let out="",rest=s,low=m.lit.toLowerCase(); while(true){const j=m.ci?rest.toLowerCase().indexOf(low):rest.indexOf(m.lit); if(j<0){out+=rest;break;} out+=rest.slice(0,j)+rep; rest=rest.slice(j+m.lit.length);} return out===s?null:out;}
     const nv=s.replace(m,rep); return nv===s?null:nv;}
   function run(preview){
     const idx=scopeIdx(),tcols=targetCols(),changes=[];
     for(const i of idx)for(const c of tcols){const cur=grid.edits.has(i+"|"+c)?grid.edits.get(i+"|"+c):grid.rows[i][c]; const nv=apply(cur); if(nv!=null&&String(nv)!==String(cur??""))changes.push({i,c,old:cur,nv});}
-    if(preview){const pv=$("frPrev");pv.classList.add("show"); if(!changes.length){pv.textContent="no matches in scope";return;} pv.innerHTML=`<b>${changes.length}</b> cell(s) would change:<br>`+changes.slice(0,40).map(ch=>`${grid.rows[ch.i].__id||("#"+(ch.i+1))} · ${ch.c}: <del>${esc(ch.old)}</del> → <ins>${esc(ch.nv)}</ins>`).join("<br>")+(changes.length>40?`<br>… +${changes.length-40} more`:"");}
-    else{for(const ch of changes)grid.edits.set(ch.i+"|"+ch.c,ch.nv); grid.render(); mountFindReplace(grid); toast(`${changes.length} cell(s) edited`);}
+    if(preview){const pv=el("#frPrev");pv.classList.add("show"); if(!changes.length){pv.textContent="no matches in scope";return;} pv.innerHTML=`<b>${changes.length}</b> cell(s) would change:<br>`+changes.slice(0,40).map(ch=>`${grid.rows[ch.i].__id||("#"+(ch.i+1))} · ${ch.c}: <del>${esc(ch.old)}</del> → <ins>${esc(ch.nv)}</ins>`).join("<br>")+(changes.length>40?`<br>… +${changes.length-40} more`:"");}
+    else{for(const ch of changes)grid.edits.set(ch.i+"|"+ch.c,ch.nv); grid.render(); mountFindReplace(grid,mountId); toast(`${changes.length} cell(s) edited`);}
     return changes.length;
   }
   const esc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
-  $("frPreview").onclick=()=>run(true);
-  $("frApply").onclick=()=>run(false);
-  $("frRevert").onclick=()=>{grid.edits.clear();grid.render();mountFindReplace(grid);toast("edits reverted");};
-  $("frExport").onclick=()=>{const cs=grid.changeSet(); if(!cs.length){toast("no edits to export");return;} const escc=(v)=>{v=v==null?"":String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}; const csv=["record_id,object,crm,field,old,new",...cs.map(r=>[r.record_id,r.object,r.crm,r.field,r.old,r.new].map(escc).join(","))].join("\n"); download("change-set.csv",csv,"text/csv"); toast(`${cs.length} change(s) exported`);};
+  el("#frPreview").onclick=()=>run(true);
+  el("#frApply").onclick=()=>run(false);
+  el("#frRevert").onclick=()=>{grid.edits.clear();grid.render();mountFindReplace(grid,mountId);toast("edits reverted");};
+  el("#frExport").onclick=()=>{const cs=grid.changeSet(); if(!cs.length){toast("no edits to export");return;} const escc=(v)=>{v=v==null?"":String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}; const csv=["record_id,object,crm,field,old,new",...cs.map(r=>[r.record_id,r.object,r.crm,r.field,r.old,r.new].map(escc).join(","))].join("\n"); download("change-set.csv",csv,"text/csv"); toast(`${cs.length} change(s) exported`);};
 }
 
 /* ---------- presets / source / tabs ---------- */
@@ -799,7 +825,7 @@ const PRESETS={salesforce:[
 function renderPresets(){const box=$("presets");box.innerHTML="";for(const[l,v] of PRESETS[SRC]){const b=document.createElement("button");b.textContent=l;b.onclick=()=>{$("q").value=v;};box.appendChild(b);}}
 function setSrc(s){SRC=s;for(const b of $("srcTabs").children)b.setAttribute("aria-pressed",b.dataset.src===s?"true":"false");$("qLabel").textContent=s==="salesforce"?"SOQL (SELECT only)":"Attio filter (JSON) — blank = all";$("attioParams").style.display=s==="attio"?"flex":"none";renderPresets();$("q").value=PRESETS[s][0][1];}
 for(const b of $("srcTabs").children)b.onclick=()=>setSrc(b.dataset.src);
-for(const b of document.querySelectorAll('[role=tab]')){b.onclick=()=>{for(const t of document.querySelectorAll('[role=tab]'))t.setAttribute("aria-selected",t===b?"true":"false");$("tab-query").hidden=b.dataset.tab!=="query";$("tab-bulk").hidden=b.dataset.tab!=="bulk";};}
+for(const b of document.querySelectorAll('[role=tab]')){b.onclick=()=>{for(const t of document.querySelectorAll('[role=tab]'))t.setAttribute("aria-selected",t===b?"true":"false");$("tab-query").hidden=b.dataset.tab!=="query";$("tab-bulk").hidden=b.dataset.tab!=="bulk";$("tab-files").hidden=b.dataset.tab!=="files"; if(b.dataset.tab==="files")loadFileList();};}
 
 /* download helper */
 function download(name,text,type){const b=new Blob([text],{type});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
@@ -840,6 +866,48 @@ async function runBulk(){
 }
 function tile(n,l,cls){return `<div class="tile ${cls||""}"><div class="n">${n.toLocaleString()}</div><div class="l">${l}</div></div>`;}
 $("bulkBtn").onclick=runBulk;
+
+/* ---------- Load CSV from review-local/ ---------- */
+// Minimal RFC-4180-ish CSV parser: quoted fields, escaped quotes, CRLF.
+function parseCsv(text){
+  const rows=[]; let row=[],cur="",q=false;
+  for(let i=0;i<text.length;i++){const c=text[i];
+    if(q){if(c==='"'){if(text[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=c;}
+    else{if(c==='"')q=true;else if(c===','){row.push(cur);cur="";}else if(c==='\n'){row.push(cur);rows.push(row);row=[];cur="";}else if(c==='\r'){}else cur+=c;}}
+  if(cur!==""||row.length){row.push(cur);rows.push(row);}
+  return rows.filter(r=>r.length&&!(r.length===1&&r[0]===""));
+}
+function flattenCsv(header,dataRows){
+  return dataRows.map((cells)=>{
+    const raw={}; header.forEach((h,i)=>raw[h]=cells[i]??"");
+    const id=raw.sf_id||raw.Id||raw.record_id||null;
+    const o={__raw:raw,__crm:"csv",__id:id,__object:id?sfObjectOf(id):null};
+    for(const h of header)o[h]=raw[h];
+    return o;
+  });
+}
+const filesGrid=new Grid($("filesGridPanel"));
+async function loadFileList(){
+  $("filesErr").classList.remove("show");
+  try{
+    const d=await(await fetch("/api/files")).json();
+    const box=$("fileList");box.innerHTML="";
+    if(!d.files||!d.files.length){box.innerHTML='<span class="stat">no CSVs in review-local/</span>';return;}
+    for(const f of d.files){const b=document.createElement("button");b.innerHTML=`${f.name} <span style="opacity:.6">· ${f.rows.toLocaleString()} rows · ${(f.size/1024).toFixed(0)} KB</span>`;b.onclick=()=>loadFile(f.name);box.appendChild(b);}
+  }catch(e){$("filesErr").textContent="could not list files: "+(e.message||e);$("filesErr").classList.add("show");}
+}
+async function loadFile(name){
+  $("filesErr").classList.remove("show");$("filesStat").textContent="loading "+name+"…";
+  try{
+    const text=await(await fetch("/api/file?name="+encodeURIComponent(name))).text();
+    if(text.startsWith('{"error"'))throw new Error(JSON.parse(text).error);
+    const rows=parseCsv(text); if(!rows.length)throw new Error("empty file");
+    const header=rows[0],data=rows.slice(1);
+    filesGrid.load(flattenCsv(header,data)); mountFindReplace(filesGrid,"filesFrMount");
+    $("filesStat").textContent=`${name} · ${data.length.toLocaleString()} rows · ${header.length} columns`;
+  }catch(e){$("filesErr").textContent=String(e.message||e);$("filesErr").classList.add("show");$("filesStat").textContent="";$("filesGridPanel").hidden=true;$("filesFrMount").hidden=true;}
+}
+$("filesRefresh").onclick=loadFileList;
 
 /* ---------- boot ---------- */
 (async()=>{try{CFG=await(await fetch("/api/config")).json();const hasSf=!!CFG.salesforce,hasAttio=!!CFG.attio;$("srcTabs").children[0].disabled=!hasSf;$("srcTabs").children[1].disabled=!hasAttio;$("footStat").textContent=`read-only · ${(CFG.crms||[]).join(" + ")}`+(CFG.salesforce?` · ${new URL(CFG.salesforce.instance).hostname}`:"")+(CFG.attio&&CFG.attio.slug?` · attio/${CFG.attio.slug}`:"");setSrc(hasSf?"salesforce":"attio");}catch{setSrc("salesforce");toast("server not reachable — start it with plans serve");}})();

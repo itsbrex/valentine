@@ -8,7 +8,7 @@
 // Start it portless so no port is ever hardcoded:
 //   bun run plans serve --name crm-playground npx tsx apps/crm-playground-server.ts
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadConfig, activeCrms } from "../src/config.js";
@@ -16,6 +16,9 @@ import { SalesforceSession } from "../src/connectors/salesforce.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGE = join(HERE, "crm-playground.html");
+// Local review exports (gitignored). Served read-only from this one folder, by
+// basename only — the name regex blocks any path separator or traversal.
+const REVIEW = join(HERE, "..", "review-local");
 const cfg = loadConfig();
 const crms = activeCrms(cfg);
 
@@ -85,6 +88,40 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/playground")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       res.end(readFileSync(PAGE));
+      return;
+    }
+
+    // List the CSVs in review-local/ (basename + size + approx row count).
+    if (req.method === "GET" && url.pathname === "/api/files") {
+      try {
+        const files = readdirSync(REVIEW)
+          .filter((f) => /\.csv$/i.test(f))
+          .map((f) => {
+            const p = join(REVIEW, f);
+            let rows = 0;
+            try { rows = Math.max(0, readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).length - 1); } catch {}
+            return { name: f, size: statSync(p).size, rows };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name));
+        return json(res, 200, { files });
+      } catch {
+        return json(res, 200, { files: [] });
+      }
+    }
+
+    // Serve one CSV's raw text. basename only — no separators, no traversal.
+    if (req.method === "GET" && url.pathname === "/api/file") {
+      const name = url.searchParams.get("name") ?? "";
+      if (!/^[\w.-]+\.csv$/i.test(name)) return json(res, 400, { error: "bad file name" });
+      const p = join(REVIEW, name);
+      if (!p.startsWith(REVIEW + "/")) return json(res, 400, { error: "outside review folder" });
+      try {
+        const text = readFileSync(p, "utf8");
+        res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(text);
+      } catch {
+        json(res, 404, { error: "not found" });
+      }
       return;
     }
 
