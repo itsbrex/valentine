@@ -415,7 +415,7 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
 }
 </style></head><body>
 <style>
-  .wrap{max-width:1200px;margin:0 auto;padding:0 16px;min-height:100dvh;display:flex;flex-direction:column}
+  .wrap{max-width:1360px;margin:0 auto;padding:0 16px;min-height:100dvh;display:flex;flex-direction:column}
   header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px 0 10px}
   header h1{font-size:17px;margin:0;display:flex;align-items:center;gap:8px;letter-spacing:-.01em}
   header h1 .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
@@ -424,62 +424,70 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
     background:color-mix(in oklch,var(--ok),transparent 90%);border-radius:999px;padding:2px 9px}
   .spacer{flex:1}
   .src{display:flex;gap:6px}
-  .src button{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);
-    background:var(--bg-2);color:var(--txt-2);cursor:pointer}
+  .src button,.tabs button,.presets button,.gbtn{font:inherit;cursor:pointer}
+  .src button{font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt-2)}
   .src button[aria-pressed=true]{background:var(--accent-soft,var(--bg-3));color:var(--txt);border-color:var(--accent)}
   .src button[disabled]{opacity:.4;cursor:not-allowed}
-  main{flex:1;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding-bottom:20px}
-  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:2px}
-  .tabs button{font:inherit;font-size:13px;padding:8px 14px;border:0;background:none;color:var(--txt-3);
-    cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+  main{flex:1;display:block;padding-bottom:20px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
+  .tabs button{font-size:13px;padding:8px 14px;border:0;background:none;color:var(--txt-3);border-bottom:2px solid transparent;margin-bottom:-1px}
   .tabs button[aria-selected=true]{color:var(--txt);border-bottom-color:var(--accent)}
-  .panel{background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .panel{background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
   label.fld{font-size:12px;color:var(--txt-3);display:flex;flex-direction:column;gap:4px}
-  select,input[type=text],input[type=number]{font:inherit;font-size:13px;background:var(--bg-2);
-    color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
-  textarea{font-family:var(--font-mono,ui-monospace,monospace);font-size:12.5px;line-height:1.5;
-    width:100%;min-height:110px;background:var(--bg);color:var(--txt);border:1px solid var(--line);
-    border-radius:8px;padding:10px 11px;resize:vertical;box-sizing:border-box}
+  select,input[type=text],input[type=number]{font:inherit;font-size:13px;background:var(--bg-2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+  textarea{font-family:var(--font-mono,ui-monospace,monospace);font-size:12.5px;line-height:1.5;width:100%;min-height:96px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px 11px;resize:vertical;box-sizing:border-box}
   textarea:focus,select:focus,input:focus{outline:none;border-color:var(--accent)}
   .actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
   .stat{font-family:var(--font-mono,monospace);font-size:12px;color:var(--txt-3)}
   .stat b{color:var(--txt)}
-  .err{color:var(--warn);font-family:var(--font-mono,monospace);font-size:12.5px;white-space:pre-wrap;
-    background:color-mix(in oklch,var(--warn),transparent 92%);border:1px solid color-mix(in oklch,var(--warn),transparent 70%);
-    border-radius:8px;padding:8px 10px;margin-top:10px;display:none}
+  .err{color:var(--warn);font-family:var(--font-mono,monospace);font-size:12.5px;white-space:pre-wrap;background:color-mix(in oklch,var(--warn),transparent 92%);border:1px solid color-mix(in oklch,var(--warn),transparent 70%);border-radius:8px;padding:8px 10px;margin-top:10px;display:none}
   .err.show{display:block}
   .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:12px 0}
   .tile{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
-  .tile .n{font-size:22px;font-weight:700;letter-spacing:-.02em}
-  .tile .l{font-size:11px;color:var(--txt-3);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+  .tile .n{font-size:22px;font-weight:700;letter-spacing:-.02em}.tile .l{font-size:11px;color:var(--txt-3);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
   .tile.ok .n{color:var(--ok)}.tile.warn .n{color:var(--warn)}
-  .tblwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;max-height:56vh;margin-top:8px}
-  table{border-collapse:collapse;width:100%;font-size:12.5px}
-  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap;
-    max-width:340px;overflow:hidden;text-overflow:ellipsis}
-  th{position:sticky;top:0;background:var(--bg-3);color:var(--txt-2);font-weight:600;font-size:11px;
-    text-transform:uppercase;letter-spacing:.04em;z-index:1}
-  tbody tr:hover{background:var(--bg-2)}
-  td a{color:var(--accent);text-decoration:none}
-  .viewbtn{font:inherit;font-size:11px;padding:2px 8px;border:1px solid var(--line);border-radius:6px;
-    background:var(--bg-2);color:var(--txt-2);cursor:pointer}
-  .log{font-family:var(--font-mono,monospace);font-size:11.5px;color:var(--txt-3);max-height:120px;
-    overflow:auto;border-top:1px solid var(--line);margin-top:10px;padding-top:8px;white-space:pre-wrap}
-  .foot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;
-    border-top:1px solid var(--line);font-size:12px;color:var(--txt-3)}
   .presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-  .presets button{font:inherit;font-size:11.5px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);
-    background:var(--bg-2);color:var(--txt-2);cursor:pointer}
+  .presets button{font-size:11.5px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt-2)}
   .presets button:hover{border-color:var(--accent);color:var(--txt)}
-  .toasts{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);display:flex;flex-direction:column;
-    gap:8px;z-index:50}
-  .toast{background:var(--bg-3);border:1px solid var(--line);border-radius:10px;padding:9px 14px;font-size:12.5px;
-    color:var(--txt);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+  /* grid */
+  .gtoolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .gbtn{font-size:12px;padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt-2);position:relative}
+  .gbtn:hover{border-color:var(--accent);color:var(--txt)}
+  .gbtn.on{border-color:var(--accent);color:var(--txt);background:var(--accent-soft,var(--bg-3))}
+  .gsearch{font-size:12.5px;min-width:180px}
+  .colmenu{position:absolute;top:calc(100% + 4px);left:0;z-index:20;background:var(--bg-1);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:320px;overflow:auto;min-width:200px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .colmenu label{display:flex;gap:7px;align-items:center;font-size:12px;color:var(--txt-2);padding:3px 4px;cursor:pointer;white-space:nowrap}
+  .colmenu label:hover{background:var(--bg-2);border-radius:5px}
+  .tblwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;max-height:62vh}
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px}
+  th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap;max-width:360px;overflow:hidden;text-overflow:ellipsis}
+  thead th{position:sticky;top:0;background:var(--bg-3);color:var(--txt-2);font-weight:600;font-size:11px;z-index:2}
+  th.sortable{cursor:pointer;user-select:none}
+  th .arr{color:var(--accent);margin-left:4px}
+  tr.filt th{position:sticky;top:28px;background:var(--bg-2);z-index:1;padding:4px 6px}
+  tr.filt input{width:100%;font-size:11px;padding:3px 6px;background:var(--bg);border:1px solid var(--line);border-radius:5px}
+  tbody tr:hover{background:var(--bg-2)}
+  tbody tr[aria-selected=true]{background:color-mix(in oklch,var(--accent),transparent 88%)}
+  td a{color:var(--accent);text-decoration:none}td a:hover{text-decoration:underline}
+  td.dirty{background:color-mix(in oklch,var(--warn),transparent 82%);color:var(--txt);font-weight:600}
+  td.dirty::after{content:"●";color:var(--warn);font-size:8px;margin-left:5px;vertical-align:middle}
+  .ck{cursor:pointer}
+  th.ckcol,td.ckcol{width:30px;text-align:center;max-width:30px}
+  td.idx{color:var(--txt-3);font-variant-numeric:tabular-nums}
+  .viewbtn{font-size:11px;padding:1px 7px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2);color:var(--txt-2);cursor:pointer}
+  .foot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-top:1px solid var(--line);font-size:12px;color:var(--txt-3)}
+  /* find & replace */
+  .fr{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end}
+  .fr .full{grid-column:1/-1}
+  .frprev{font-family:var(--font-mono,monospace);font-size:11.5px;color:var(--txt-2);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:8px;max-height:180px;overflow:auto;display:none}
+  .frprev.show{display:block}
+  .frprev del{color:var(--warn);text-decoration:line-through}.frprev ins{color:var(--ok);text-decoration:none}
+  .toasts{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:50}
+  .toast{background:var(--bg-3);border:1px solid var(--line);border-radius:10px;padding:9px 14px;font-size:12.5px;color:var(--txt);box-shadow:0 8px 24px rgba(0,0,0,.3)}
   .modal-bk{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:60;padding:20px}
   .modal-bk.show{display:flex}
-  .modal{background:var(--bg-1);border:1px solid var(--line);border-radius:12px;max-width:720px;width:100%;
-    max-height:80vh;overflow:auto;padding:16px}
+  .modal{background:var(--bg-1);border:1px solid var(--line);border-radius:12px;max-width:720px;width:100%;max-height:80vh;overflow:auto;padding:16px}
   .modal pre{font-family:var(--font-mono,monospace);font-size:12px;white-space:pre-wrap;word-break:break-word;margin:0;color:var(--txt-2)}
   @media(max-width:640px){th,td{max-width:180px}}
 </style>
@@ -487,13 +495,13 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
 <div class="wrap">
   <header>
     <h1><span class="dot"></span> CRM Query Playground</h1>
-    <span class="ro-badge" id="roBadge">READ-ONLY</span>
+    <span class="ro-badge">READ-ONLY</span>
     <div class="spacer"></div>
     <div class="src" id="srcTabs">
       <button data-src="salesforce" aria-pressed="true">Salesforce</button>
       <button data-src="attio" aria-pressed="false">Attio</button>
     </div>
-    <button class="kbdbtn" id="themeBtn" title="Cycle theme">◐ theme</button>
+    <button class="kbdbtn gbtn" id="themeBtn" title="Cycle theme">◐ theme</button>
   </header>
 
   <div class="tabs" role="tablist">
@@ -502,64 +510,46 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
   </div>
 
   <main>
-    <!-- QUERY TAB -->
-    <section class="panel" id="tab-query">
-      <div class="presets" id="presets"></div>
-      <label class="fld" style="width:100%">
-        <span id="qLabel">SOQL (SELECT only)</span>
-        <textarea id="q" spellcheck="false"></textarea>
-      </label>
-      <div class="row" id="attioParams" style="display:none">
-        <label class="fld">object
-          <select id="attioObject"><option>companies</option><option>people</option></select>
-        </label>
-        <label class="fld">limit
-          <input type="number" id="attioLimit" value="25" min="1" max="500" style="width:80px">
-        </label>
-        <span class="stat">filter goes in the box above as JSON, e.g. <code>{"domains":"acme.com"}</code></span>
+    <!-- QUERY -->
+    <section id="tab-query">
+      <div class="panel">
+        <div class="presets" id="presets"></div>
+        <label class="fld" style="width:100%"><span id="qLabel">SOQL (SELECT only)</span>
+          <textarea id="q" spellcheck="false"></textarea></label>
+        <div class="row" id="attioParams" style="display:none">
+          <label class="fld">object<select id="attioObject"><option>companies</option><option>people</option></select></label>
+          <label class="fld">limit<input type="number" id="attioLimit" value="50" min="1" max="500" style="width:80px"></label>
+          <span class="stat">filter = JSON in the box, e.g. <code>{"domains":"acme.com"}</code></span>
+        </div>
+        <div class="actions">
+          <button class="btn-primary" id="runBtn">Run <kbd>⌘↵</kbd></button>
+          <span class="stat" id="qStat"></span>
+        </div>
+        <div class="err" id="qErr"></div>
       </div>
-      <div class="actions">
-        <button class="btn-primary" id="runBtn">Run <kbd>⌘↵</kbd></button>
-        <span class="stat" id="qStat"></span>
-        <div class="spacer"></div>
-        <button class="btn-ghost" id="csvBtn" disabled>Export CSV</button>
-        <button class="btn-ghost" id="jsonBtn" disabled>Export JSON</button>
-      </div>
-      <div class="err" id="qErr"></div>
-      <div class="tblwrap" id="qTblWrap" hidden><table id="qTbl"></table></div>
-      <div class="log" id="qLog" hidden></div>
+      <div class="panel" id="qGridPanel" hidden></div>
+      <div class="panel" id="frPanel" hidden></div>
     </section>
 
-    <!-- BULK TAB -->
-    <section class="panel" id="tab-bulk" hidden>
-      <p class="stat" style="margin-top:0">Paste domains (one per line, or comma/space separated). One batched SOQL per 100, then an exact host filter — the accuracy trick from <b>SOQL_QUERIES.md</b>. Read-only.</p>
-      <div class="row">
-        <label class="fld" style="flex:1;min-width:240px">domains
-          <textarea id="domains" placeholder="acme.com&#10;willdan.com&#10;hines.com" style="min-height:130px"></textarea>
-        </label>
+    <!-- BULK -->
+    <section id="tab-bulk" hidden>
+      <div class="panel">
+        <p class="stat" style="margin-top:0">Paste domains (one per line / comma / space). One batched SOQL per 100, then an exact host filter. Read-only.</p>
+        <div class="row"><label class="fld" style="flex:1;min-width:240px">domains
+          <textarea id="domains" placeholder="acme.com&#10;willdan.com&#10;hines.com" style="min-height:120px"></textarea></label></div>
+        <div class="row">
+          <label class="fld">match on<select id="bulkField"><option value="website">Account.Website</option><option value="email">Email</option></select></label>
+          <button class="btn-primary" id="bulkBtn">Check existence</button>
+          <span class="stat" id="bulkStat"></span>
+        </div>
+        <div class="err" id="bulkErr"></div>
+        <div class="tiles" id="bulkTiles" hidden></div>
       </div>
-      <div class="row">
-        <label class="fld">match on
-          <select id="bulkField"><option value="website">Account.Website</option><option value="email">Contact/Account Email</option></select>
-        </label>
-        <button class="btn-primary" id="bulkBtn">Check existence</button>
-        <span class="stat" id="bulkStat"></span>
-      </div>
-      <div class="err" id="bulkErr"></div>
-      <div class="tiles" id="bulkTiles" hidden></div>
-      <div class="actions" id="bulkExport" hidden>
-        <div class="spacer"></div>
-        <button class="btn-ghost" id="bulkCsvBtn">Export matched CSV</button>
-        <button class="btn-ghost" id="bulkNotCsvBtn">Export not-in-SF CSV</button>
-      </div>
-      <div class="tblwrap" id="bulkTblWrap" hidden><table id="bulkTbl"></table></div>
+      <div class="panel" id="bulkGridPanel" hidden></div>
     </section>
   </main>
 
-  <div class="foot">
-    <span id="footStat">read-only console</span>
-    <span>valentine · crm-playground</span>
-  </div>
+  <div class="foot"><span id="footStat">read-only console</span><span>valentine · crm-playground</span></div>
 </div>
 
 <div class="modal-bk" id="modalBk"><div class="modal"><pre id="modalPre"></pre></div></div>
@@ -567,200 +557,291 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
 
 <script>
 "use strict";
-const $ = (id) => document.getElementById(id);
-let SRC = "salesforce";
-let lastRows = [];
+const $=(id)=>document.getElementById(id);
+let SRC="salesforce", CFG={};
 
-/* ---- theme cycler ---- */
-const THEMES = ["", "goldenrod", "cobalt", "jade", "amber", "violet", "rose", "ember", "phosphor", "graphite", "paper"];
-let ti = 0;
-try { const s = localStorage.getItem("pg-theme"); if (s !== null) { ti = Math.max(0, THEMES.indexOf(s)); } } catch {}
-function applyTheme() { const t = THEMES[ti]; if (t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); try { localStorage.setItem("pg-theme", t); } catch {} }
-applyTheme();
-$("themeBtn").onclick = () => { ti = (ti + 1) % THEMES.length; applyTheme(); toast("Theme: " + (THEMES[ti] || "auto")); };
+/* theme */
+const THEMES=["","goldenrod","cobalt","jade","amber","violet","rose","ember","phosphor","graphite","paper"];
+let ti=0; try{const s=localStorage.getItem("pg-theme"); if(s!==null)ti=Math.max(0,THEMES.indexOf(s));}catch{}
+function applyTheme(){const t=THEMES[ti]; if(t)document.documentElement.setAttribute("data-theme",t); else document.documentElement.removeAttribute("data-theme"); try{localStorage.setItem("pg-theme",t);}catch{}}
+applyTheme(); $("themeBtn").onclick=()=>{ti=(ti+1)%THEMES.length; applyTheme(); toast("Theme: "+(THEMES[ti]||"auto"));};
+function toast(m){const t=document.createElement("div");t.className="toast";t.textContent=m;$("toasts").appendChild(t);setTimeout(()=>t.remove(),2600);}
+$("modalBk").onclick=(e)=>{if(e.target===$("modalBk"))$("modalBk").classList.remove("show");};
+document.addEventListener("keydown",(e)=>{if(e.key==="Escape")$("modalBk").classList.remove("show");});
+function showJson(o){$("modalPre").textContent=JSON.stringify(o,null,2);$("modalBk").classList.add("show");}
 
-function toast(msg) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; $("toasts").appendChild(t); setTimeout(() => t.remove(), 2600); }
-
-/* ---- presets ---- */
-const PRESETS = {
-  salesforce: [
-    ["Account by website", "SELECT Id, Name, Website, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate\nFROM Account WHERE Website LIKE '%acme.com%' LIMIT 10"],
-    ["Account + firmographics", "SELECT Id, Name, Website, NumberOfEmployees, AnnualRevenue, Industry\nFROM Account WHERE Website LIKE '%willdan.com%' LIMIT 10"],
-    ["Contact by email domain", "SELECT Id, Name, Email, Account.Name, Owner.Name, LastActivityDate\nFROM Contact WHERE Email LIKE '%@acme.com' LIMIT 10"],
-    ["Unconverted Lead", "SELECT Id, Name, Company, Email, Website, Status, Owner.Name\nFROM Lead WHERE IsConverted = false AND (Email LIKE '%@acme.com' OR Website LIKE '%acme.com%') LIMIT 10"],
-    ["Opportunities (by AccountId)", "SELECT Id, Name, StageName, IsClosed, Amount, CloseDate, Type, Owner.Name\nFROM Opportunity WHERE AccountId = '001XXXXXXXXXXXXXXX' ORDER BY CreatedDate DESC LIMIT 10"],
-    ["Activity (last touch + next)", "SELECT Id,\n  (SELECT Id, Subject, ActivityDate, ActivityType, IsTask FROM ActivityHistories ORDER BY ActivityDate DESC, LastModifiedDate DESC LIMIT 5),\n  (SELECT Id, Subject, ActivityDate, Status, Owner.Name FROM OpenActivities ORDER BY ActivityDate ASC, LastModifiedDate DESC LIMIT 5)\nFROM Account WHERE Id = '001XXXXXXXXXXXXXXX' LIMIT 1"],
-    ["LinkedIn id present", "SELECT Id, Name, Website, LID__LinkedIn_Company_Id__c\nFROM Account WHERE LID__LinkedIn_Company_Id__c != null LIMIT 20"],
-    ["Count all accounts", "SELECT COUNT() FROM Account"],
-  ],
-  attio: [
-    ["companies by domain", '{"domains":"acme.com"}'],
-    ["companies w/ account_owner set", '{"account_owner":{"$not_empty":true}}'],
-    ["companies by name contains", '{"name":{"$contains":"Willdan"}}'],
-    ["all (paged)", ""],
-  ],
-};
-function renderPresets() {
-  const box = $("presets"); box.innerHTML = "";
-  for (const [label, val] of PRESETS[SRC]) {
-    const b = document.createElement("button"); b.textContent = label;
-    b.onclick = () => { $("q").value = val; };
-    box.appendChild(b);
+/* ---------- Salesforce id → object, for deep links ---------- */
+const SF_PREFIX={"001":"Account","003":"Contact","00Q":"Lead","006":"Opportunity","005":"User","00T":"Task","00U":"Event","701":"Campaign","00v":"CampaignMember","00O":"Report","500":"Case","0WO":"Order"};
+function sfObjectOf(id){ if(typeof id!=="string")return null; if(!/^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/.test(id))return null; return SF_PREFIX[id.slice(0,3)]||null; }
+/* linkify: return a URL for a cell value, or null. Uses the column name and
+   the sibling raw fields so an Owner name links to its User, etc. */
+function linkify(col,val,raw,kind){
+  if(val==null||val==="")return null;
+  const sv=String(val);
+  if(kind==="attio"){
+    if(col==="web_url"&&/^https?:/.test(sv))return sv;
+    if(col==="id"&&CFG.attio&&CFG.attio.slug){const obj=(raw&&raw.__object==="people")?"person":"company";return `https://app.attio.com/${CFG.attio.slug}/${obj}/${sv}`;}
+    if(col==="linkedin"&&/^https?:/.test(sv))return sv;
+    if(col==="domain"&&/\./.test(sv))return "https://"+sv.replace(/^https?:\/\//,"");
+    if(/^https?:\/\//.test(sv))return sv;
+    return null;
   }
+  // Salesforce
+  const inst=CFG.salesforce&&CFG.salesforce.instance;
+  if(!inst)return /^https?:\/\//.test(sv)?sv:null;
+  const rec=(obj,id)=>`${inst}/lightning/r/${obj}/${id}/view`;
+  // a value that IS an sf id
+  const asId=sfObjectOf(sv); if(asId)return rec(asId,sv);
+  // name columns that have a sibling id (read from the original record)
+  const sib=(f)=>raw&&((raw.__raw&&raw.__raw[f])??raw[f]);
+  if(col==="Owner.Name"&&sib("OwnerId"))return rec("User",sib("OwnerId"));
+  if(col==="Account.Name"&&sib("AccountId"))return rec("Account",sib("AccountId"));
+  if(col==="Campaign.Name"&&sib("CampaignId"))return rec("Campaign",sib("CampaignId"));
+  if(col==="Website"&&/\./.test(sv))return "https://"+sv.replace(/^https?:\/\//,"");
+  if(col==="Email"&&sv.includes("@"))return "mailto:"+sv;
+  if(/^https?:\/\//.test(sv))return sv;
+  return null;
 }
 
-/* ---- source switch ---- */
-function setSrc(s) {
-  SRC = s;
-  for (const b of $("srcTabs").children) b.setAttribute("aria-pressed", b.dataset.src === s ? "true" : "false");
-  $("qLabel").textContent = s === "salesforce" ? "SOQL (SELECT only)" : "Attio filter (JSON) — blank = all";
-  $("attioParams").style.display = s === "attio" ? "flex" : "none";
-  renderPresets();
-  $("q").value = PRESETS[s][0][1];
-}
-for (const b of $("srcTabs").children) b.onclick = () => setSrc(b.dataset.src);
-
-/* ---- tabs ---- */
-for (const b of document.querySelectorAll('[role=tab]')) {
-  b.onclick = () => {
-    for (const t of document.querySelectorAll('[role=tab]')) t.setAttribute("aria-selected", t === b ? "true" : "false");
-    $("tab-query").hidden = b.dataset.tab !== "query";
-    $("tab-bulk").hidden = b.dataset.tab !== "bulk";
-  };
-}
-
-/* ---- table render (generic, one level flat + full JSON on view) ---- */
-function flat(r) {
-  const o = {};
-  for (const [k, v] of Object.entries(r)) {
-    if (k === "attributes") continue;
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      if ("Name" in v) o[k + ".Name"] = v.Name;
-      else if ("records" in v) o[k] = "(" + (v.records ? v.records.length : 0) + ")";
-      else if ("value" in v) o[k] = v.value;
-      else o[k] = JSON.stringify(v).slice(0, 40);
-    } else if (Array.isArray(v)) {
-      o[k] = v.length ? (v[0]?.domain ?? v[0]?.value ?? JSON.stringify(v[0]).slice(0, 30)) : "";
-    } else o[k] = v;
-  }
-  return o;
-}
-function attioFlat(r) {
-  const v = r.values || {};
-  const g = (s) => { const a = v[s]; if (!a || !a.length) return ""; const x = a[0]; return x.option?.title ?? x.value ?? x.domain ?? x.full_name ?? ""; };
-  return { id: r.id?.record_id, name: g("name"), domain: (v.domains && v.domains[0]?.domain) || "", linkedin: g("linkedin"), web_url: r.web_url };
-}
-function renderTable(tbl, rows, srcKind) {
-  tbl.innerHTML = "";
-  if (!rows.length) { tbl.innerHTML = "<tbody><tr><td>no rows</td></tr></tbody>"; return; }
-  const flatRows = rows.map((r) => (srcKind === "attio" ? attioFlat(r) : flat(r)));
-  const cols = [...new Set(flatRows.flatMap((r) => Object.keys(r)))];
-  const thead = document.createElement("thead"); const htr = document.createElement("tr");
-  for (const c of cols) { const th = document.createElement("th"); th.textContent = c; htr.appendChild(th); }
-  const thv = document.createElement("th"); thv.textContent = ""; htr.appendChild(thv);
-  thead.appendChild(htr); tbl.appendChild(thead);
-  const tb = document.createElement("tbody");
-  flatRows.slice(0, 500).forEach((fr, i) => {
-    const tr = document.createElement("tr");
-    for (const c of cols) {
-      const td = document.createElement("td");
-      const val = fr[c];
-      if (typeof val === "string" && /^https?:\/\//.test(val)) { const a = document.createElement("a"); a.href = val; a.target = "_blank"; a.rel = "noopener"; a.textContent = val.replace(/^https?:\/\//, ""); td.appendChild(a); }
-      else td.textContent = val == null ? "" : String(val);
-      td.title = td.textContent; tr.appendChild(td);
+/* ---------- flatten rows, keep raw + id + object ---------- */
+function flattenSf(rows){
+  return rows.map((r)=>{
+    const o={__raw:r,__crm:"salesforce"};
+    for(const[k,v] of Object.entries(r)){
+      if(k==="attributes")continue;
+      if(v&&typeof v==="object"&&!Array.isArray(v)){
+        if("Name" in v)o[k+".Name"]=v.Name;
+        else if("records" in v)o[k]="("+(v.records?v.records.length:0)+")";
+        else o[k]=JSON.stringify(v).slice(0,40);
+      } else o[k]=v;
     }
-    const tdv = document.createElement("td"); const vb = document.createElement("button"); vb.className = "viewbtn"; vb.textContent = "{ }";
-    vb.onclick = () => { $("modalPre").textContent = JSON.stringify(rows[i], null, 2); $("modalBk").classList.add("show"); };
-    tdv.appendChild(vb); tr.appendChild(tdv); tb.appendChild(tr);
+    o.__id=r.Id||null; o.__object=r.Id?sfObjectOf(r.Id):null;
+    return o; // sibling ids for linkify are read from o.__raw, never forced as columns
   });
-  tbl.appendChild(tb);
 }
-$("modalBk").onclick = (e) => { if (e.target === $("modalBk")) $("modalBk").classList.remove("show"); };
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("modalBk").classList.remove("show"); });
+function flattenAttio(rows){
+  return rows.map((r)=>{
+    const v=r.values||{};
+    const g=(s)=>{const a=v[s];if(!a||!a.length)return "";const x=a[0];return x.option?.title??x.value??x.domain??x.full_name??"";};
+    return {__raw:r,__crm:"attio",__id:r.id?.record_id||null,__object:"companies",
+      id:r.id?.record_id, name:g("name"), domain:(v.domains&&v.domains[0]?.domain)||"",
+      linkedin:g("linkedin"), account_owner:g("account_owner"), web_url:r.web_url};
+  });
+}
 
-/* ---- run query ---- */
-async function runQuery() {
-  const q = $("q").value.trim();
-  $("qErr").classList.remove("show"); $("qStat").textContent = "running…";
-  $("runBtn").disabled = true;
-  try {
+/* ---------- Grid ---------- */
+class Grid{
+  constructor(panel){this.panel=panel;this.rows=[];this.cols=[];this.vis=new Set();this.sort={col:null,dir:1};this.filters={};this.q="";this.sel=new Set();this.edits=new Map();this.lastAnchor=null;this.onEdit=null;}
+  load(disp){
+    this.rows=disp;
+    const c=[]; for(const r of disp)for(const k of Object.keys(r))if(!k.startsWith("__")&&!c.includes(k))c.push(k);
+    this.cols=c; this.vis=new Set(c); this.sort={col:null,dir:1}; this.filters={}; this.q=""; this.sel.clear(); this.edits.clear();
+    this.render();
+  }
+  cell(i,col){const k=i+"|"+col; if(this.edits.has(k))return this.edits.get(k); return this.rows[i][col];}
+  view(){
+    let idx=this.rows.map((_,i)=>i);
+    const q=this.q.trim().toLowerCase();
+    if(q)idx=idx.filter(i=>this.cols.some(c=>String(this.cell(i,c)??"").toLowerCase().includes(q)));
+    for(const[c,f] of Object.entries(this.filters)){const ff=f.trim().toLowerCase(); if(ff)idx=idx.filter(i=>String(this.cell(i,c)??"").toLowerCase().includes(ff));}
+    if(this.sort.col){const c=this.sort.col,d=this.sort.dir; idx.sort((a,b)=>{const x=this.cell(a,c),y=this.cell(b,c); const nx=parseFloat(x),ny=parseFloat(y); let r; if(!isNaN(nx)&&!isNaN(ny)&&String(x).trim()!==""&&String(y).trim()!=="")r=nx-ny; else r=String(x??"").localeCompare(String(y??"")); return r*d;});}
+    return idx;
+  }
+  render(){
+    const p=this.panel; p.hidden=false; p.innerHTML="";
+    const vcols=this.cols.filter(c=>this.vis.has(c));
+    const idx=this.view();
+    // toolbar
+    const tb=document.createElement("div");tb.className="gtoolbar";
+    tb.innerHTML=`<input class="gsearch" id="_gs" placeholder="search all columns…" value="${this.q.replace(/"/g,'&quot;')}">
+      <button class="gbtn" id="_cols">Columns (${vcols.length}/${this.cols.length})</button>
+      <span class="stat"><b>${idx.length}</b> row(s)${this.sel.size?` · <b>${this.sel.size}</b> selected`:""}${this.edits.size?` · <b>${this.edits.size}</b> edited`:""}</span>
+      <div class="spacer"></div>
+      <button class="gbtn" id="_selall">Select filtered</button>
+      <button class="gbtn" id="_selnone">Clear sel</button>
+      <button class="gbtn" id="_csv">Export CSV</button>
+      <button class="gbtn" id="_json">Export JSON</button>`;
+    p.appendChild(tb);
+    // column menu
+    tb.querySelector("#_cols").onclick=(e)=>{e.stopPropagation(); this.colMenu(tb.querySelector("#_cols"));};
+    tb.querySelector("#_gs").oninput=(e)=>{this.q=e.target.value; this.renderBody();};
+    tb.querySelector("#_selall").onclick=()=>{for(const i of this.view())this.sel.add(i); this.render();};
+    tb.querySelector("#_selnone").onclick=()=>{this.sel.clear(); this.render();};
+    tb.querySelector("#_csv").onclick=()=>this.exportCsv();
+    tb.querySelector("#_json").onclick=()=>download("rows.json",JSON.stringify(idx.map(i=>this.rows[i].__raw),null,2),"application/json");
+    // table
+    const wrap=document.createElement("div");wrap.className="tblwrap";
+    const tbl=document.createElement("table"); this._tbl=tbl; wrap.appendChild(tbl); p.appendChild(wrap);
+    this._vcols=vcols; this.renderBody();
+  }
+  renderBody(){
+    const vcols=this.cols.filter(c=>this.vis.has(c)); this._vcols=vcols;
+    const idx=this.view(); const tbl=this._tbl; tbl.innerHTML="";
+    const thead=document.createElement("thead");
+    const htr=document.createElement("tr");
+    htr.innerHTML=`<th class="ckcol"><input type="checkbox" class="ck" id="_ckall"></th><th class="ckcol">#</th>`;
+    for(const c of vcols){const th=document.createElement("th");th.className="sortable";th.textContent=c; if(this.sort.col===c){const s=document.createElement("span");s.className="arr";s.textContent=this.sort.dir>0?"▲":"▼";th.appendChild(s);} th.onclick=()=>{if(this.sort.col===c)this.sort.dir*=-1;else{this.sort.col=c;this.sort.dir=1;} this.renderBody();}; htr.appendChild(th);}
+    const thv=document.createElement("th");thv.textContent="";htr.appendChild(thv);
+    thead.appendChild(htr);
+    // filter row
+    const ftr=document.createElement("tr");ftr.className="filt";
+    ftr.innerHTML=`<th class="ckcol"></th><th class="ckcol"></th>`;
+    for(const c of vcols){const th=document.createElement("th");const inp=document.createElement("input");inp.placeholder="filter";inp.value=this.filters[c]||"";inp.oninput=(e)=>{this.filters[c]=e.target.value;this.renderBody();};th.appendChild(inp);htr&&ftr.appendChild(th);}
+    ftr.appendChild(document.createElement("th"));
+    thead.appendChild(ftr); tbl.appendChild(thead);
+    const tb=document.createElement("tbody");
+    idx.slice(0,1000).forEach((i)=>{
+      const r=this.rows[i]; const tr=document.createElement("tr"); tr.setAttribute("aria-selected",this.sel.has(i)?"true":"false");
+      const ck=document.createElement("td");ck.className="ckcol";const cb=document.createElement("input");cb.type="checkbox";cb.className="ck";cb.checked=this.sel.has(i);
+      cb.onclick=(e)=>{if(e.shiftKey&&this.lastAnchor!=null){const va=this.view();const a=va.indexOf(this.lastAnchor),b=va.indexOf(i);if(a>-1&&b>-1){const[lo,hi]=[Math.min(a,b),Math.max(a,b)];for(let k=lo;k<=hi;k++)this.sel.add(va[k]);}}else{if(cb.checked)this.sel.add(i);else this.sel.delete(i);} this.lastAnchor=i; this.render();};
+      ck.appendChild(cb);tr.appendChild(ck);
+      const ix=document.createElement("td");ix.className="idx";ix.textContent=i+1;tr.appendChild(ix);
+      for(const c of vcols){
+        const td=document.createElement("td");const k=i+"|"+c;const edited=this.edits.has(k);const val=edited?this.edits.get(k):r[c];
+        if(edited)td.className="dirty";
+        const url=linkify(c,val,r,r.__crm);
+        if(url){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener";a.textContent=String(val).replace(/^https?:\/\//,"").replace(/^mailto:/,"");a.title=url;td.appendChild(a);}
+        else{td.textContent=val==null?"":String(val);}
+        td.title=td.title||String(val==null?"":val);
+        td.ondblclick=()=>this.editCell(i,c,td);
+        tr.appendChild(td);
+      }
+      const tv=document.createElement("td");const vb=document.createElement("button");vb.className="viewbtn";vb.textContent="{ }";vb.onclick=()=>showJson(r.__raw);tv.appendChild(vb);tr.appendChild(tv);
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    const ckall=tbl.querySelector("#_ckall"); if(ckall){ckall.checked=idx.length>0&&idx.every(i=>this.sel.has(i)); ckall.onclick=()=>{if(ckall.checked)for(const i of idx)this.sel.add(i);else for(const i of idx)this.sel.delete(i);this.render();};}
+  }
+  editCell(i,c,td){
+    const cur=this.edits.has(i+"|"+c)?this.edits.get(i+"|"+c):this.rows[i][c];
+    const inp=document.createElement("input");inp.type="text";inp.value=cur==null?"":String(cur);inp.style.width="100%";
+    td.textContent="";td.appendChild(inp);inp.focus();inp.select();
+    const commit=()=>{const nv=inp.value; if(String(nv)!==String(this.rows[i][c]??"")){this.edits.set(i+"|"+c,nv);}else{this.edits.delete(i+"|"+c);} this.renderBody(); if(this.onEdit)this.onEdit();};
+    inp.onblur=commit; inp.onkeydown=(e)=>{if(e.key==="Enter")commit(); if(e.key==="Escape"){this.renderBody();}};
+  }
+  colMenu(anchor){
+    document.querySelectorAll(".colmenu").forEach(m=>m.remove());
+    const m=document.createElement("div");m.className="colmenu";
+    const mk=(txt,fn)=>{const b=document.createElement("button");b.className="gbtn";b.style.margin="0 4px 6px 0";b.textContent=txt;b.onclick=fn;return b;};
+    m.appendChild(mk("all",()=>{this.vis=new Set(this.cols);this.render();}));
+    m.appendChild(mk("none",()=>{this.vis=new Set();this.render();}));
+    for(const c of this.cols){const l=document.createElement("label");const cb=document.createElement("input");cb.type="checkbox";cb.checked=this.vis.has(c);cb.onchange=()=>{if(cb.checked)this.vis.add(c);else this.vis.delete(c);this.renderBody(); const btn=this.panel.querySelector("#_cols"); if(btn)btn.textContent=`Columns (${this.cols.filter(x=>this.vis.has(x)).length}/${this.cols.length})`;};l.appendChild(cb);l.appendChild(document.createTextNode(" "+c));m.appendChild(l);}
+    anchor.appendChild(m);
+    setTimeout(()=>{document.addEventListener("click",function h(e){if(!m.contains(e.target)){m.remove();document.removeEventListener("click",h);}});},0);
+  }
+  exportCsv(){
+    const vcols=this.cols.filter(c=>this.vis.has(c)); const idx=this.view();
+    const esc=(v)=>{v=v==null?"":String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+    const lines=[vcols.join(",")]; for(const i of idx)lines.push(vcols.map(c=>esc(this.cell(i,c))).join(","));
+    download("grid.csv",lines.join("\n"),"text/csv");
+  }
+  /* change-set of edited cells: record_id, object, crm, field, old, new */
+  changeSet(){
+    const out=[]; for(const[k,nv] of this.edits){const[si,col]=k.split("|");const i=+si;const r=this.rows[i];out.push({record_id:r.__id||"",object:r.__object||"",crm:r.__crm,field:col,old:r[col]==null?"":r[col],new:nv});}
+    return out;
+  }
+}
+
+/* ---------- Find & Replace panel (operates on a grid, exports a change-set) ---------- */
+function mountFindReplace(grid){
+  const p=$("frPanel"); p.hidden=false;
+  p.innerHTML=`<div class="row" style="margin:0 0 8px"><b style="font-size:13px">Find &amp; replace — data hygiene</b>
+    <span class="stat">edits the loaded rows locally and exports a reviewed change-set. Never writes to the CRM.</span></div>
+  <div class="fr">
+    <label class="fld">column<select id="frCol"></select></label>
+    <label class="fld">scope<select id="frScope"><option value="filtered">filtered rows</option><option value="selected">selected rows</option><option value="all">all loaded rows</option></select></label>
+    <label class="fld">find<input type="text" id="frFind" placeholder="text or /regex/"></label>
+    <label class="fld">replace with<input type="text" id="frRepl" placeholder="new value"></label>
+    <label class="fld">options<span style="display:flex;gap:10px;font-size:12px;color:var(--txt-2)"><label><input type="checkbox" id="frRe"> regex</label><label><input type="checkbox" id="frCase"> case</label><label><input type="checkbox" id="frWhole"> whole cell</label></span></label>
+  </div>
+  <div class="actions"><button class="gbtn" id="frPreview">Preview</button><button class="btn-primary" id="frApply">Apply to grid</button>
+    <button class="gbtn" id="frRevert">Revert all edits</button><div class="spacer"></div>
+    <button class="btn-ghost" id="frExport">Export change-set CSV</button></div>
+  <div class="frprev" id="frPrev"></div>`;
+  const cols=grid.cols; const sel=$("frCol"); sel.innerHTML='<option value="__all">(all visible columns)</option>'+cols.map(c=>`<option>${c}</option>`).join("");
+  function scopeIdx(){const s=$("frScope").value; if(s==="all")return grid.rows.map((_,i)=>i); if(s==="selected")return[...grid.sel]; return grid.view();}
+  function targetCols(){const c=$("frCol").value; return c==="__all"?grid.cols.filter(x=>grid.vis.has(x)):[c];}
+  function matcher(){const f=$("frFind").value; if(!f)return null; if($("frRe").checked){try{return new RegExp(f,$("frCase").checked?"g":"gi");}catch(e){toast("bad regex");return null;}} return {lit:f,ci:!$("frCase").checked};}
+  function apply(cell){const m=matcher(); if(m==null)return null; const rep=$("frRepl").value; const whole=$("frWhole").checked; const s=cell==null?"":String(cell);
+    if(whole){const hit=(m.lit!=null)?(m.ci?s.toLowerCase()===m.lit.toLowerCase():s===m.lit):new RegExp("^(?:"+$("frFind").value+")$",$("frCase").checked?"":"i").test(s); return hit?rep:null;}
+    if(m.lit!=null){const idx=m.ci?s.toLowerCase().indexOf(m.lit.toLowerCase()):s.indexOf(m.lit); if(idx<0)return null; // literal replace-all
+      let out="",rest=s,low=m.lit.toLowerCase(); while(true){const j=m.ci?rest.toLowerCase().indexOf(low):rest.indexOf(m.lit); if(j<0){out+=rest;break;} out+=rest.slice(0,j)+rep; rest=rest.slice(j+m.lit.length);} return out===s?null:out;}
+    const nv=s.replace(m,rep); return nv===s?null:nv;}
+  function run(preview){
+    const idx=scopeIdx(),tcols=targetCols(),changes=[];
+    for(const i of idx)for(const c of tcols){const cur=grid.edits.has(i+"|"+c)?grid.edits.get(i+"|"+c):grid.rows[i][c]; const nv=apply(cur); if(nv!=null&&String(nv)!==String(cur??""))changes.push({i,c,old:cur,nv});}
+    if(preview){const pv=$("frPrev");pv.classList.add("show"); if(!changes.length){pv.textContent="no matches in scope";return;} pv.innerHTML=`<b>${changes.length}</b> cell(s) would change:<br>`+changes.slice(0,40).map(ch=>`${grid.rows[ch.i].__id||("#"+(ch.i+1))} · ${ch.c}: <del>${esc(ch.old)}</del> → <ins>${esc(ch.nv)}</ins>`).join("<br>")+(changes.length>40?`<br>… +${changes.length-40} more`:"");}
+    else{for(const ch of changes)grid.edits.set(ch.i+"|"+ch.c,ch.nv); grid.render(); mountFindReplace(grid); toast(`${changes.length} cell(s) edited`);}
+    return changes.length;
+  }
+  const esc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  $("frPreview").onclick=()=>run(true);
+  $("frApply").onclick=()=>run(false);
+  $("frRevert").onclick=()=>{grid.edits.clear();grid.render();mountFindReplace(grid);toast("edits reverted");};
+  $("frExport").onclick=()=>{const cs=grid.changeSet(); if(!cs.length){toast("no edits to export");return;} const escc=(v)=>{v=v==null?"":String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}; const csv=["record_id,object,crm,field,old,new",...cs.map(r=>[r.record_id,r.object,r.crm,r.field,r.old,r.new].map(escc).join(","))].join("\n"); download("change-set.csv",csv,"text/csv"); toast(`${cs.length} change(s) exported`);};
+}
+
+/* ---------- presets / source / tabs ---------- */
+const PRESETS={salesforce:[
+  ["Account by website","SELECT Id, Name, Website, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate\nFROM Account WHERE Website LIKE '%acme.com%' LIMIT 50"],
+  ["Account + firmographics","SELECT Id, Name, Website, NumberOfEmployees, AnnualRevenue, Industry, OwnerId, Owner.Name\nFROM Account WHERE Website LIKE '%willdan.com%' LIMIT 50"],
+  ["Contacts by email domain","SELECT Id, Name, Email, AccountId, Account.Name, OwnerId, Owner.Name, LastActivityDate\nFROM Contact WHERE Email LIKE '%@acme.com' LIMIT 50"],
+  ["Unconverted Leads","SELECT Id, Name, Company, Email, Website, Status, OwnerId, Owner.Name\nFROM Lead WHERE IsConverted = false LIMIT 50"],
+  ["Opportunities (AccountId)","SELECT Id, Name, StageName, IsClosed, Amount, CloseDate, Type, OwnerId, Owner.Name\nFROM Opportunity WHERE AccountId = '001XXXXXXXXXXXXXXX' ORDER BY CreatedDate DESC LIMIT 50"],
+  ["Users (owners)","SELECT Id, Name, Email, IsActive, Title, UserRole.Name FROM User WHERE IsActive = true LIMIT 100"],
+  ["LinkedIn id present","SELECT Id, Name, Website, LID__LinkedIn_Company_Id__c, OwnerId, Owner.Name\nFROM Account WHERE LID__LinkedIn_Company_Id__c != null LIMIT 100"],
+],attio:[
+  ["companies by domain",'{"domains":"acme.com"}'],
+  ["companies w/ account_owner",'{"account_owner":{"$not_empty":true}}'],
+  ["companies by name",'{"name":{"$contains":"Willdan"}}'],
+  ["all (paged)",""],
+]};
+function renderPresets(){const box=$("presets");box.innerHTML="";for(const[l,v] of PRESETS[SRC]){const b=document.createElement("button");b.textContent=l;b.onclick=()=>{$("q").value=v;};box.appendChild(b);}}
+function setSrc(s){SRC=s;for(const b of $("srcTabs").children)b.setAttribute("aria-pressed",b.dataset.src===s?"true":"false");$("qLabel").textContent=s==="salesforce"?"SOQL (SELECT only)":"Attio filter (JSON) — blank = all";$("attioParams").style.display=s==="attio"?"flex":"none";renderPresets();$("q").value=PRESETS[s][0][1];}
+for(const b of $("srcTabs").children)b.onclick=()=>setSrc(b.dataset.src);
+for(const b of document.querySelectorAll('[role=tab]')){b.onclick=()=>{for(const t of document.querySelectorAll('[role=tab]'))t.setAttribute("aria-selected",t===b?"true":"false");$("tab-query").hidden=b.dataset.tab!=="query";$("tab-bulk").hidden=b.dataset.tab!=="bulk";};}
+
+/* download helper */
+function download(name,text,type){const b=new Blob([text],{type});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+
+/* ---------- run query ---------- */
+const qGrid=new Grid($("qGridPanel"));
+async function runQuery(){
+  const q=$("q").value.trim();$("qErr").classList.remove("show");$("qStat").textContent="running…";$("runBtn").disabled=true;
+  try{
     let data;
-    if (SRC === "salesforce") {
-      data = await (await fetch("/api/soql", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q }) })).json();
-    } else {
-      let filter = null; if (q) { try { filter = JSON.parse(q); } catch { throw new Error("Attio filter must be valid JSON."); } }
-      data = await (await fetch("/api/attio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ object: $("attioObject").value, filter, limit: +$("attioLimit").value }) })).json();
-    }
-    if (data.error) throw new Error(data.error);
-    lastRows = data.rows || [];
-    renderTable($("qTbl"), lastRows, SRC);
-    $("qTblWrap").hidden = false;
-    $("qStat").textContent = `${data.count} row(s) · ${data.elapsedMs} ms` + (data.count > 500 ? " · showing first 500" : "");
-    $("csvBtn").disabled = $("jsonBtn").disabled = !lastRows.length;
-  } catch (e) {
-    $("qErr").textContent = String(e.message || e); $("qErr").classList.add("show"); $("qStat").textContent = "";
-  } finally { $("runBtn").disabled = false; }
+    if(SRC==="salesforce")data=await(await fetch("/api/soql",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({q})})).json();
+    else{let filter=null;if(q){try{filter=JSON.parse(q);}catch{throw new Error("Attio filter must be valid JSON.");}}data=await(await fetch("/api/attio",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({object:$("attioObject").value,filter,limit:+$("attioLimit").value})})).json();}
+    if(data.error)throw new Error(data.error);
+    const rows=data.rows||[]; const disp=SRC==="attio"?flattenAttio(rows):flattenSf(rows);
+    qGrid.load(disp); mountFindReplace(qGrid);
+    $("qStat").textContent=`${data.count} row(s) · ${data.elapsedMs} ms`+(data.count>1000?" · showing first 1000":"");
+  }catch(e){$("qErr").textContent=String(e.message||e);$("qErr").classList.add("show");$("qStat").textContent="";$("qGridPanel").hidden=true;$("frPanel").hidden=true;}
+  finally{$("runBtn").disabled=false;}
 }
-$("runBtn").onclick = runQuery;
-$("q").addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runQuery(); } });
+$("runBtn").onclick=runQuery;
+$("q").addEventListener("keydown",(e)=>{if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){e.preventDefault();runQuery();}});
 
-/* ---- exports ---- */
-function toCsv(rows, kind) {
-  const fr = rows.map((r) => (kind === "attio" ? attioFlat(r) : flat(r)));
-  const cols = [...new Set(fr.flatMap((r) => Object.keys(r)))];
-  const esc = (v) => { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-  return [cols.join(","), ...fr.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n");
+/* ---------- bulk ---------- */
+const bulkGrid=new Grid($("bulkGridPanel"));
+async function runBulk(){
+  const raw=$("domains").value.split(/[\s,]+/).map(s=>s.trim().toLowerCase()).filter(s=>s.includes("."));
+  if(!raw.length){$("bulkErr").textContent="Paste some domains first.";$("bulkErr").classList.add("show");return;}
+  $("bulkErr").classList.remove("show");$("bulkStat").textContent=`checking ${raw.length}…`;$("bulkBtn").disabled=true;
+  try{
+    const data=await(await fetch("/api/bulk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({domains:raw,field:$("bulkField").value})})).json();
+    if(data.error)throw new Error(data.error);
+    const s=data.summary;$("bulkTiles").hidden=false;
+    $("bulkTiles").innerHTML=tile(s.checked,"checked")+tile(s.in_salesforce,"in salesforce","ok")+tile(s.not_in_salesforce,"not in SF")+tile(s.duplicates,"dup accounts","warn");
+    const flat=[];for(const[dom,acc] of Object.entries(data.matched))for(const a of acc)flat.push({__raw:{domain:dom,...a},__crm:"salesforce",__id:a.id,__object:"Account",domain:dom,sf_id:a.id,Id:a.id,sf_name:a.name,Website:a.website,duplicate:acc.length>1?"yes":""});
+    bulkGrid.load(flat);$("bulkStat").textContent=`${data.elapsedMs} ms`;
+  }catch(e){$("bulkErr").textContent=String(e.message||e);$("bulkErr").classList.add("show");$("bulkStat").textContent="";}
+  finally{$("bulkBtn").disabled=false;}
 }
-function download(name, text, type) { const b = new Blob([text], { type }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
-$("csvBtn").onclick = () => download("query.csv", toCsv(lastRows, SRC), "text/csv");
-$("jsonBtn").onclick = () => download("query.json", JSON.stringify(lastRows, null, 2), "application/json");
+function tile(n,l,cls){return `<div class="tile ${cls||""}"><div class="n">${n.toLocaleString()}</div><div class="l">${l}</div></div>`;}
+$("bulkBtn").onclick=runBulk;
 
-/* ---- bulk domain check ---- */
-let bulkResult = null;
-async function runBulk() {
-  const raw = $("domains").value.split(/[\s,]+/).map((s) => s.trim().toLowerCase()).filter((s) => s.includes("."));
-  if (!raw.length) { $("bulkErr").textContent = "Paste some domains first."; $("bulkErr").classList.add("show"); return; }
-  $("bulkErr").classList.remove("show"); $("bulkStat").textContent = `checking ${raw.length}…`; $("bulkBtn").disabled = true;
-  try {
-    const data = await (await fetch("/api/bulk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ domains: raw, field: $("bulkField").value }) })).json();
-    if (data.error) throw new Error(data.error);
-    bulkResult = data;
-    const s = data.summary;
-    $("bulkTiles").hidden = false;
-    $("bulkTiles").innerHTML =
-      tile(s.checked, "checked") + tile(s.in_salesforce, "in salesforce", "ok") +
-      tile(s.not_in_salesforce, "not in SF") + tile(s.duplicates, "dup accounts", "warn");
-    const flatM = [];
-    for (const [dom, accts] of Object.entries(data.matched)) for (const a of accts) flatM.push({ domain: dom, sf_id: a.id, sf_name: a.name, website: a.website, dup: accts.length > 1 ? "yes" : "" });
-    renderBulkTable(flatM);
-    $("bulkTblWrap").hidden = false; $("bulkExport").hidden = false;
-    $("bulkStat").textContent = `${data.elapsedMs} ms`;
-  } catch (e) { $("bulkErr").textContent = String(e.message || e); $("bulkErr").classList.add("show"); $("bulkStat").textContent = ""; }
-  finally { $("bulkBtn").disabled = false; }
-}
-function tile(n, l, cls) { return `<div class="tile ${cls || ""}"><div class="n">${n.toLocaleString()}</div><div class="l">${l}</div></div>`; }
-function renderBulkTable(rows) {
-  const tbl = $("bulkTbl"); tbl.innerHTML = "";
-  const cols = ["domain", "sf_id", "sf_name", "website", "dup"];
-  tbl.innerHTML = "<thead><tr>" + cols.map((c) => `<th>${c}</th>`).join("") + "</tr></thead>";
-  const tb = document.createElement("tbody");
-  rows.slice(0, 500).forEach((r) => { const tr = document.createElement("tr"); for (const c of cols) { const td = document.createElement("td"); td.textContent = r[c] == null ? "" : String(r[c]); td.title = td.textContent; tr.appendChild(td); } tb.appendChild(tr); });
-  tbl.appendChild(tb);
-}
-$("bulkBtn").onclick = runBulk;
-$("bulkCsvBtn").onclick = () => { if (!bulkResult) return; const rows = []; for (const [dom, a] of Object.entries(bulkResult.matched)) for (const x of a) rows.push([dom, x.id, x.name || "", x.website || "", a.length > 1 ? "yes" : ""]); download("in-salesforce.csv", "domain,sf_id,sf_name,website,duplicate\n" + rows.map((r) => r.map((v) => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v).join(",")).join("\n"), "text/csv"); };
-$("bulkNotCsvBtn").onclick = () => { if (!bulkResult) return; download("not-in-salesforce.csv", "domain\n" + bulkResult.notInSf.join("\n"), "text/csv"); };
-
-/* ---- boot ---- */
-(async () => {
-  try {
-    const cfg = await (await fetch("/api/config")).json();
-    const hasSf = !!cfg.salesforce, hasAttio = !!cfg.attio;
-    $("srcTabs").children[0].disabled = !hasSf;
-    $("srcTabs").children[1].disabled = !hasAttio;
-    $("footStat").textContent = `read-only · ${(cfg.crms || []).join(" + ")}` + (cfg.salesforce ? ` · ${new URL(cfg.salesforce.instance).hostname}` : "");
-    setSrc(hasSf ? "salesforce" : "attio");
-  } catch { setSrc("salesforce"); toast("server not reachable — start it with plans serve"); }
-})();
+/* ---------- boot ---------- */
+(async()=>{try{CFG=await(await fetch("/api/config")).json();const hasSf=!!CFG.salesforce,hasAttio=!!CFG.attio;$("srcTabs").children[0].disabled=!hasSf;$("srcTabs").children[1].disabled=!hasAttio;$("footStat").textContent=`read-only · ${(CFG.crms||[]).join(" + ")}`+(CFG.salesforce?` · ${new URL(CFG.salesforce.instance).hostname}`:"")+(CFG.attio&&CFG.attio.slug?` · attio/${CFG.attio.slug}`:"");setSrc(hasSf?"salesforce":"attio");}catch{setSrc("salesforce");toast("server not reachable — start it with plans serve");}})();
 </script>
 </body></html>

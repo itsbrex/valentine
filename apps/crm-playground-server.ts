@@ -27,6 +27,19 @@ const sf =
 
 // --- Attio raw read helper ---
 const attioKey = cfg.attioKey;
+let attioSlug: string | undefined;
+async function attioWorkspaceSlug(): Promise<string | undefined> {
+  if (attioSlug !== undefined || !attioKey) return attioSlug;
+  try {
+    const res = await fetch("https://api.attio.com/v2/self", { headers: { Authorization: `Bearer ${attioKey}` } });
+    const body = await res.json();
+    const s = body?.data ?? body;
+    attioSlug = s?.workspace_slug ?? "";
+  } catch {
+    attioSlug = "";
+  }
+  return attioSlug;
+}
 async function attioQuery(object: string, filter: unknown, limit: number, offset: number): Promise<any[]> {
   if (!attioKey) throw new Error("Attio not configured");
   if (!/^[a-z_]+$/.test(object)) throw new Error("bad object");
@@ -79,7 +92,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         crms,
         salesforce: sf ? { instance: cfg.salesforceInstanceUrl } : null,
-        attio: attioKey ? { ok: true } : null,
+        attio: attioKey ? { ok: true, slug: await attioWorkspaceSlug() } : null,
         readOnly: true,
       });
     }
