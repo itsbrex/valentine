@@ -15,3 +15,6 @@ dist/
 .claude/HANDOFF.md
 .instance/
 .remember/
+
+# Local CRM review exports (client data — never commit; public repo)
+review-local/
