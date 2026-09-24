@@ -539,7 +539,8 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
         <div class="row"><label class="fld" style="flex:1;min-width:240px">domains
           <textarea id="domains" placeholder="acme.com&#10;willdan.com&#10;hines.com" style="min-height:120px"></textarea></label></div>
         <div class="row">
-          <label class="fld">match on<select id="bulkField"><option value="website">Account.Website</option><option value="email">Email</option></select></label>
+          <label class="fld">match on<select id="bulkField"><option value="website">Account.Website</option><option value="email">Account owner email</option></select></label>
+          <span class="stat">each matched account returns all 18 Ownership Desk fields</span>
           <button class="btn-primary" id="bulkBtn">Check existence</button>
           <span class="stat" id="bulkStat"></span>
         </div>
@@ -815,6 +816,7 @@ const PRESETS={salesforce:[
   ["Unconverted Leads","SELECT Id, Name, Company, Email, Website, Status, OwnerId, Owner.Name\nFROM Lead WHERE IsConverted = false LIMIT 50"],
   ["Opportunities (AccountId)","SELECT Id, Name, StageName, IsClosed, Amount, CloseDate, Type, OwnerId, Owner.Name\nFROM Opportunity WHERE AccountId = '001XXXXXXXXXXXXXXX' ORDER BY CreatedDate DESC LIMIT 50"],
   ["Users (owners)","SELECT Id, Name, Email, IsActive, Title, UserRole.Name FROM User WHERE IsActive = true LIMIT 100"],
+  ["Ownership Desk (18 fields)","SELECT Id, Name, Website, Type, OwnerId, Owner.Name, Account_Owner_s_Email__c, Account_Owner_Territory_s__c, LastActivityDate, Inactivity_Date__c, BillingCity, BillingState, BillingCountry, ZoomInfo_Number_of_Locations__c, Portfolio_Locations__c, of_Locations__c, NumberOfEmployees, AnnualRevenue\nFROM Account WHERE Website LIKE '%willdan.com%' LIMIT 50"],
   ["LinkedIn id present","SELECT Id, Name, Website, LID__LinkedIn_Company_Id__c, OwnerId, Owner.Name\nFROM Account WHERE LID__LinkedIn_Company_Id__c != null LIMIT 100"],
 ],attio:[
   ["companies by domain",'{"domains":"acme.com"}'],
@@ -859,8 +861,8 @@ async function runBulk(){
     if(data.error)throw new Error(data.error);
     const s=data.summary;$("bulkTiles").hidden=false;
     $("bulkTiles").innerHTML=tile(s.checked,"checked")+tile(s.in_salesforce,"in salesforce","ok")+tile(s.not_in_salesforce,"not in SF")+tile(s.duplicates,"dup accounts","warn");
-    const flat=[];for(const[dom,acc] of Object.entries(data.matched))for(const a of acc)flat.push({__raw:{domain:dom,...a},__crm:"salesforce",__id:a.id,__object:"Account",domain:dom,sf_id:a.id,Id:a.id,sf_name:a.name,Website:a.website,duplicate:acc.length>1?"yes":""});
-    bulkGrid.load(flat);$("bulkStat").textContent=`${data.elapsedMs} ms`;
+    const flat=[];for(const[dom,acc] of Object.entries(data.matched))for(const a of acc)flat.push({__raw:{domain:dom,...a},__crm:"salesforce",__id:a.sf_id||a.id,__object:"Account",domain:dom,duplicate:acc.length>1?"yes":"",...a});
+    bulkGrid.load(flat);$("bulkStat").textContent=`${data.checked} checked · ${data.elapsedMs} ms · ${flat.length} matched account(s), 18 fields each`;
   }catch(e){$("bulkErr").textContent=String(e.message||e);$("bulkErr").classList.add("show");$("bulkStat").textContent="";}
   finally{$("bulkBtn").disabled=false;}
 }

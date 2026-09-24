@@ -82,6 +82,44 @@ function host(u?: string): string | undefined {
   return h.startsWith("www.") ? h.slice(4) : h || undefined;
 }
 
+// The 18 Ownership Desk Account fields (verified on the cresa org). SOQL column
+// → friendly name. Probe-tiered: an org missing the custom fields answers
+// INVALID_FIELD once, then this drops to the standard subset for the session.
+const ACCT18: [string, string][] = [
+  ["Id", "sf_id"], ["Name", "sf_name"], ["Website", "website"], ["Type", "account_type"],
+  ["OwnerId", "owner_id"], ["Owner.Name", "owner"], ["Account_Owner_s_Email__c", "owner_email"],
+  ["Account_Owner_Territory_s__c", "owner_territories"], ["LastActivityDate", "last_activity"],
+  ["Inactivity_Date__c", "inactivity_date"], ["BillingCity", "hq_city"], ["BillingState", "hq_state"],
+  ["BillingCountry", "hq_country"], ["ZoomInfo_Number_of_Locations__c", "zi_locations"],
+  ["Portfolio_Locations__c", "portfolio_locations"], ["of_Locations__c", "num_locations"],
+  ["NumberOfEmployees", "employees"], ["AnnualRevenue", "annual_revenue"],
+];
+const ACCT18_BARE: [string, string][] = [["Id", "sf_id"], ["Name", "sf_name"], ["Website", "website"], ["OwnerId", "owner_id"], ["Owner.Name", "owner"], ["LastActivityDate", "last_activity"]];
+let acctFull = true;
+function flatAcct(r: any, map: [string, string][]): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  for (const [col, name] of map) {
+    let v: any = r;
+    for (const p of col.split(".")) v = v && typeof v === "object" ? v[p] : undefined;
+    o[name] = v ?? "";
+  }
+  return o;
+}
+/** Batched Account read with the 18-field set, falling back to bare once. */
+async function acctBatch(where: string): Promise<{ rows: any[]; map: [string, string][] }> {
+  if (acctFull) {
+    try {
+      const rows = await sf!.soql(`SELECT ${ACCT18.map((f) => f[0]).join(", ")} FROM Account WHERE ${where} LIMIT 2000`);
+      return { rows, map: ACCT18 };
+    } catch (e: any) {
+      if (!/INVALID_FIELD|No such column|FIELD_INTEGRITY/i.test(String(e?.message))) throw e;
+      acctFull = false;
+    }
+  }
+  const rows = await sf!.soql(`SELECT ${ACCT18_BARE.map((f) => f[0]).join(", ")} FROM Account WHERE ${where} LIMIT 2000`);
+  return { rows, map: ACCT18_BARE };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   try {
@@ -169,20 +207,20 @@ const server = createServer(async (req, res) => {
         ? domains.map((d) => String(d).trim().toLowerCase()).filter((d) => d.includes("."))
         : [];
       if (!list.length) return json(res, 400, { error: "no domains" });
-      const col = field === "email" ? "Email" : "Website";
+      const useEmail = field === "email";
       const esc = (s: string) => s.replace(/(['\\])/g, "\\$1");
       const t0 = Date.now();
-      const matched: Record<string, { id: string; name?: string; website?: string }[]> = {};
+      // Each matched account carries the full 18-field Ownership Desk set.
+      const matched: Record<string, Record<string, unknown>[]> = {};
       try {
         for (let i = 0; i < list.length; i += 100) {
           const chunk = list.slice(i, i + 100);
-          const where = chunk.map((d) => (col === "Email" ? `Email LIKE '%@${esc(d)}'` : `Website LIKE '%${esc(d)}%'`)).join(" OR ");
-          const sel = col === "Email" ? "Id, Name, Email, Website" : "Id, Name, Website";
-          const rows = await sf.soql(`SELECT ${sel} FROM Account WHERE ${where} LIMIT 2000`);
+          const where = chunk.map((d) => (useEmail ? `Account_Owner_s_Email__c LIKE '%@${esc(d)}'` : `Website LIKE '%${esc(d)}%'`)).join(" OR ");
+          const { rows, map } = await acctBatch(where);
           const want = new Set(chunk);
           for (const r of rows) {
-            const h = host(col === "Email" ? r.Email?.split("@")[1] : r.Website);
-            if (h && want.has(h)) (matched[h] ??= []).push({ id: r.Id, name: r.Name, website: r.Website });
+            const h = useEmail ? host(String(r.Account_Owner_s_Email__c ?? "").split("@")[1]) : host(r.Website);
+            if (h && want.has(h)) (matched[h] ??= []).push(flatAcct(r, map));
           }
         }
       } catch (e: any) {

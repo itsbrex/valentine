@@ -261,6 +261,31 @@ The combined check treats a Salesforce row as a match when **either** its
 Website host equals the Attio domain **or** its LinkedIn id equals the Attio
 company's id; a row matching both is the highest-confidence tier.
 
+### Enriching matches with the Ownership Desk's 18 Account fields
+
+Once the domain match has the Salesforce account ids, pull the full field set
+the salesforced Ownership Desk shows, batched by `Id IN (...)` (200 ids/query):
+
+```sql
+SELECT Id, Name, Website, Type, OwnerId, Owner.Name, Account_Owner_s_Email__c,
+       Account_Owner_Territory_s__c, LastActivityDate, Inactivity_Date__c,
+       BillingCity, BillingState, BillingCountry,
+       ZoomInfo_Number_of_Locations__c, Portfolio_Locations__c, of_Locations__c,
+       NumberOfEmployees, AnnualRevenue
+FROM Account WHERE Id IN ('001…','001…', …) LIMIT 200
+```
+
+Friendly CSV column names: `sf_id, sf_name, website, account_type, owner_id,
+owner, owner_email, owner_territories, last_activity, inactivity_date, hq_city,
+hq_state, hq_country, zi_locations, portfolio_locations, num_locations,
+employees, annual_revenue`. The custom fields (`Inactivity_Date__c`,
+`Account_Owner_s_Email__c`, `Account_Owner_Territory_s__c`, the three
+`*_Locations__c`) are org-specific — probe-tier them and drop to a bare set
+(`Id, Name, Website, OwnerId, Owner.Name, LastActivityDate`) on `INVALID_FIELD`,
+same as the account firmographics probe. Verified present on the cresa org
+2026-09-24. The playground's Bulk domain check returns these 18 per matched
+account, and the enriched columns carry into the review CSVs.
+
 ### Dedup fallout
 
 The host-match surfaces domains that map to **more than one** Salesforce
