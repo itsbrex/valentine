@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// PLANS_TPL_VERSION: 25
+// PLANS_TPL_VERSION: 28
 // Plan-page toolchain for docs/plans/ — browse, create, and index interactive
 // HTML plan pages. Runs on `bun` (preferred, faster) or `node`.
 //
@@ -476,6 +476,7 @@ const HUB_WAITING_DIR = path.join(HUB_DIR, 'waiting');
 const HUB_TUNNEL_LABEL = 'sh.claude.plans-hub-tunnel';
 const HUB_TUNNEL_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', `${HUB_TUNNEL_LABEL}.plist`);
 const HUB_TUNNEL_LOG = path.join(os.homedir(), '.claude', 'logs', 'plans-hub-tunnel.log');
+const HUB_TUNNEL_CONFIG = path.join(HUB_DIR, 'cloudflared.yml');   // ingress for a locally managed named tunnel
 const TAILSCALE_APP_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 // Tailscale Serve port for the hub. Not 443: portless binds 443 on every
 // interface (including the node's tailnet IP), so a Mac-local request to its
@@ -806,6 +807,77 @@ async function hubRemote(argv) {
       // A previous ngrok/cloudflare agent is no longer needed.
       if (tunnelLoaded()) launchctl('bootout', `${hubDomain()}/${HUB_TUNNEL_LABEL}`);
       if (existsSync(HUB_TUNNEL_PLIST)) await fs.rm(HUB_TUNNEL_PLIST, { force: true });
+    } else if (provider === 'cloudflare' && (flags['tunnel-name'] || cfg.remote?.tunnelName)) {
+      // Locally managed named tunnel: a permanent hostname whose ingress lives in
+      // our own config file, so nothing has to be clicked in the Zero Trust
+      // dashboard. One-time setup is `cloudflared tunnel login`, which writes
+      // ~/.cloudflared/cert.pem — that cert is what lets us create the tunnel and
+      // its DNS record from here. Unlike a quick tunnel the URL never rotates.
+      if (!have('cloudflared')) fail('cloudflared is not installed — brew install cloudflared');
+      const name = String(flags['tunnel-name'] || cfg.remote.tunnelName);
+      const hostname = (flags.hostname || cfg.remote?.hostname || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+      if (!hostname) fail('--hostname <hub.example.com> is required with --tunnel-name (a name inside a zone on your Cloudflare account).');
+      const cert = path.join(os.homedir(), '.cloudflared', 'cert.pem');
+      if (!existsSync(cert)) fail(`no Cloudflare origin certificate at ${cert} — run \`cloudflared tunnel login\` once and pick the zone that owns ${hostname}.`);
+      const bin = spawnSync('command', ['-v', 'cloudflared'], { shell: true, encoding: 'utf8' }).stdout.trim();
+      const deletedTunnel = (t) => !!t.deleted_at && !String(t.deleted_at).startsWith('0001-01-01');   // cloudflared prints the zero time for live tunnels
+      const listTunnels = () => {
+        const r = spawnSync(bin, ['tunnel', 'list', '--output', 'json'], { encoding: 'utf8', timeout: 30000 });
+        try { return JSON.parse(r.stdout || '[]'); } catch { return []; }
+      };
+      let entry = listTunnels().find(t => t && t.name === name && !deletedTunnel(t));
+      if (!entry) {
+        const made = spawnSync(bin, ['tunnel', 'create', name], { encoding: 'utf8', timeout: 60000 });
+        if (made.status !== 0) fail(`cloudflared tunnel create ${name} failed: ${String(made.stderr || made.stdout || '').trim()}`);
+        entry = listTunnels().find(t => t && t.name === name && !deletedTunnel(t));
+        if (!entry) fail(`created ${name} but could not read its id back from \`cloudflared tunnel list\`.`);
+      }
+      const creds = path.join(os.homedir(), '.cloudflared', `${entry.id}.json`);
+      if (!existsSync(creds)) fail(`tunnel ${name} (${entry.id}) has no credentials file at ${creds} — it belongs to another machine; copy that file over or pick a different --tunnel-name.`);
+      await fs.writeFile(HUB_TUNNEL_CONFIG, `# plans hub named tunnel — written by \`plans hub remote on --provider cloudflare --tunnel-name ${name}\`.
+# Locally managed: the ingress rules live here, not in the Zero Trust dashboard.
+tunnel: ${entry.id}
+credentials-file: ${creds}
+protocol: http2          # QUIC (UDP 7844) is blocked on some networks; http2 always connects
+no-autoupdate: true
+ingress:
+  - hostname: ${hostname}
+    service: http://127.0.0.1:${port}
+  - service: http_status:404
+`, { mode: 0o600 });
+      const routeArgs = ['tunnel', 'route', 'dns', ...(flags['overwrite-dns'] ? ['--overwrite-dns'] : []), name, hostname];
+      const route = spawnSync(bin, routeArgs, { encoding: 'utf8', timeout: 60000 });
+      if (route.status !== 0) {
+        // Tolerate the record already pointing at this tunnel; refuse to clobber anything else.
+        const dig = spawnSync('dig', ['+short', hostname, 'CNAME'], { encoding: 'utf8', timeout: 15000 }).stdout.trim();
+        if (!dig.startsWith(`${entry.id}.cfargotunnel.com`)) {
+          fail(`cloudflared tunnel route dns ${name} ${hostname} failed: ${String(route.stderr || route.stdout || '').trim()}\n${dig ? `${hostname} currently points at ${dig}` : `${hostname} has no CNAME`} — remove that record, or rerun with --overwrite-dns to replace it.`);
+        }
+      }
+      if (tunnelLoaded()) { launchctl('bootout', `${hubDomain()}/${HUB_TUNNEL_LABEL}`); for (let i = 0; i < 40 && tunnelLoaded(); i++) await new Promise(res => setTimeout(res, 250)); }
+      await fs.mkdir(path.dirname(HUB_TUNNEL_LOG), { recursive: true });
+      await fs.writeFile(HUB_TUNNEL_LOG, '');
+      await fs.writeFile(HUB_TUNNEL_PLIST, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${HUB_TUNNEL_LABEL}</string>
+  <key>ProgramArguments</key><array><string>${escapeHtml(bin)}</string><string>tunnel</string><string>--no-autoupdate</string><string>--config</string><string>${escapeHtml(HUB_TUNNEL_CONFIG)}</string><string>run</string><string>${escapeHtml(name)}</string></array>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>${escapeHtml(HUB_TUNNEL_LOG)}</string><key>StandardErrorPath</key><string>${escapeHtml(HUB_TUNNEL_LOG)}</string>
+</dict></plist>
+`, { mode: 0o600 });
+      let r = null;
+      for (let i = 0; i < 12; i++) { r = launchctl('bootstrap', hubDomain(), HUB_TUNNEL_PLIST); if (r.status === 0) break; await new Promise(res => setTimeout(res, 500)); }
+      if (!r || r.status !== 0) fail(`launchctl bootstrap failed: ${(r?.stderr || '').trim()}`);
+      // The hostname works the moment a connection registers; wait so the printed link is accurate.
+      let registered = false;
+      for (let i = 0; i < 60 && !registered; i++) {
+        await new Promise(res => setTimeout(res, 500));
+        try { registered = /Registered tunnel connection/.test(readFileSync(HUB_TUNNEL_LOG, 'utf8')); } catch {}
+      }
+      if (!registered) console.error(`[plans hub remote] ${name} started but has not registered a connection yet — see ${HUB_TUNNEL_LOG}; the hostname starts answering as soon as it does.`);
+      baseUrl = `https://${hostname}`;
+      cfg.remote = { ...(cfg.remote || {}), tunnelName: name, hostname, named: true };
     } else if (provider === 'cloudflare' && (flags['tunnel-token'] || cfg.remote?.tunnelToken)) {
       // Named tunnel (Cloudflare Zero Trust → Networks → Tunnels → cloudflared → token),
       // with a public hostname configured there; optionally behind an Access policy
@@ -863,7 +935,9 @@ async function hubRemote(argv) {
     console.log('The hub picked the new config up already (mtime cache). Text yourself the link: bun run plans notify --test');
     return;
   }
-  console.error('Usage: plans hub remote [status|on|off] [--provider tailscale|funnel|ngrok|cloudflare] [--ts-port N] [--tunnel-token T --hostname hub.example.com]');
+  console.error('Usage: plans hub remote [status|on|off] [--provider tailscale|funnel|ngrok|cloudflare] [--ts-port N]');
+  console.error('       named Cloudflare tunnel (permanent hostname): --provider cloudflare --tunnel-name plans-hub --hostname hub.example.com [--overwrite-dns]');
+  console.error('       remotely managed token tunnel:                --provider cloudflare --tunnel-token T --hostname hub.example.com');
   process.exit(1);
 }
 async function notifyConfig() { const cfg = await hubConfig(); return cfg.notify && typeof cfg.notify === 'object' ? cfg.notify : { channel: 'off' }; }
@@ -1040,6 +1114,21 @@ async function cmdNotify(argv) {
 }
 // Called by `plans wait`: writes/refreshes the marker and texts once per plan
 // per NOTIFY_DEDUPE_MS (a restarted wait for the same plan stays quiet).
+// iMessage fetches the page the instant the text lands, and a cold Open Graph
+// card takes a few seconds to render — long enough for the preview to come back
+// bare. Ask the local hub for each link first so the card is already on disk.
+async function warmPreviewCards(links) {
+  const cfg = await hubConfig();
+  const secret = cfg.remote?.secret;
+  if (!secret || !links?.length) return;
+  const port = await hubPort();
+  for (const l of links.slice(0, 6)) {
+    let route = null;
+    try { route = new URL(l.url).pathname; } catch { continue; }
+    const url = `http://127.0.0.1:${port}${route}?key=${encodeURIComponent(secret)}`;
+    try { const r = await fetch(url, { signal: AbortSignal.timeout(45000) }); await r.arrayBuffer(); } catch {}
+  }
+}
 async function announceWaiting(cfg, plan, { started, notify }) {
   const key = `${plan.slug}-${String(plan.seq).padStart(3, '0')}`;
   const dir = path.join(HUB_WAITING_DIR, cfg.appName);
@@ -1052,7 +1141,9 @@ async function announceWaiting(cfg, plan, { started, notify }) {
   if (notify && !recently) {
     const n = await notifyConfig();
     const message = await waitingMessage([entry]);
-    const r = sendNotification(n, message.text, { file: await previewFor(n, entry), links: message.links });
+    const preview = await previewFor(n, entry);
+    await warmPreviewCards(message.links);
+    const r = sendNotification(n, message.text, { file: preview, links: message.links });
     if (r.sent) { entry.notifiedAt = new Date().toISOString(); await writeJsonAtomic(marker, entry); console.error(`[plans wait] texted you the link`); }
     else console.error(`[plans wait] no text sent — ${r.reason}`);
   }
