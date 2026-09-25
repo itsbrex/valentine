@@ -5,10 +5,14 @@
 //   - Salesforce goes through GET /query only. The query REST resource cannot
 //     perform DML; on top of that every statement is validated SELECT-only.
 //   - Attio goes through the records `query` endpoint (a read) only.
+// The one local write: saved grid views (filters, sorts, hidden columns) go to
+// ~/.valentine/playground-views.json, never to a CRM.
 // Start it portless so no port is ever hardcoded:
 //   bun run plans serve --name crm-playground npx tsx apps/crm-playground-server.ts
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadConfig, activeCrms } from "../src/config.js";
@@ -19,6 +23,34 @@ const PAGE = join(HERE, "crm-playground.html");
 // Local review exports (gitignored). Served read-only from this one folder, by
 // basename only — the name regex blocks any path separator or traversal.
 const REVIEW = join(HERE, "..", "review-local");
+// Saved grid views, keyed by dataset ("csv:<file>", "query:salesforce", "bulk").
+// Each dataset keeps the last grid state (restored on load) and named views.
+const VIEWS = process.env.VALENTINE_PLAYGROUND_VIEWS ?? join(homedir(), ".valentine", "playground-views.json");
+type ViewsDoc = { version: 1; datasets: Record<string, { last?: unknown; views?: { name: string; state: unknown; updatedAt: string }[] }> };
+async function loadViews(): Promise<ViewsDoc> {
+  try {
+    const d = JSON.parse(await readFile(VIEWS, "utf8"));
+    if (d && typeof d === "object" && d.datasets && typeof d.datasets === "object") return { version: 1, datasets: d.datasets };
+  } catch {}
+  return { version: 1, datasets: {} };
+}
+// Read-modify-write runs one at a time, and the file is replaced atomically
+// (temp file + rename), so two tabs saving at once never interleave a write.
+let viewsQueue: Promise<unknown> = Promise.resolve();
+function updateViews(fn: (d: ViewsDoc) => void): Promise<ViewsDoc> {
+  const run = viewsQueue.then(async () => {
+    const d = await loadViews();
+    fn(d);
+    await mkdir(dirname(VIEWS), { recursive: true, mode: 0o700 });
+    const tmp = `${VIEWS}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify(d, null, 2), { mode: 0o600 });
+    await rename(tmp, VIEWS);
+    return d;
+  });
+  viewsQueue = run.catch(() => {});
+  return run;
+}
+
 const cfg = loadConfig();
 const crms = activeCrms(cfg);
 
@@ -161,6 +193,31 @@ const server = createServer(async (req, res) => {
         json(res, 404, { error: "not found" });
       }
       return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/views") {
+      return json(res, 200, await loadViews());
+    }
+
+    // Merge one dataset's `last` state and/or its `views` list. Only fields
+    // present in the body change; `last: null` forgets the remembered state.
+    if (req.method === "POST" && url.pathname === "/api/views") {
+      const body = await readBody(req);
+      const key = body?.key;
+      if (typeof key !== "string" || !key || key.length > 300) return json(res, 400, { error: "bad key" });
+      if (JSON.stringify(body).length > 1_000_000) return json(res, 413, { error: "too large" });
+      if ("views" in body && !Array.isArray(body.views)) return json(res, 400, { error: "views must be an array" });
+      const doc = await updateViews((d) => {
+        const ds = (d.datasets[key] ??= {});
+        if ("last" in body) { if (body.last == null) delete ds.last; else ds.last = body.last; }
+        if ("views" in body) {
+          ds.views = body.views
+            .filter((v: any) => v && typeof v.name === "string" && v.name.trim())
+            .map((v: any) => ({ name: String(v.name).trim().slice(0, 80), state: v.state ?? {}, updatedAt: v.updatedAt || new Date().toISOString() }));
+        }
+        if (!ds.last && !ds.views?.length) delete d.datasets[key];
+      });
+      return json(res, 200, { ok: true, dataset: doc.datasets[key] ?? {} });
     }
 
     if (req.method === "GET" && url.pathname === "/api/config") {
