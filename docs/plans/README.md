@@ -29,18 +29,19 @@ Since v16 stamping is context-aware (a title or source containing quotes or
 tags can neither break nor inject into the page), `plans new` takes a sequence
 lock so two sessions never mint the same `#NNN`, and every page carries a
 random submission token the decision listener must see (see `DESIGN.md`,
-"Receiving decisions"). Tests: `node --test ~/.claude/templates/plans/tests/`.
+"Receiving decisions"). Tests: `node --test ~/.claude/templates/plans/tests/*.test.mjs`.
 
 Plan pages (v13) carry a 13-entry theme system — default **Auto** resolves to
 Cresa goldenrod on dark systems, paper on light; **Repo accent** restores the
 stamped per-repo color — plus a persisted Motion toggle. Both live on the
-toolbar and are shared across a repo's plan pages via the `plan-ui`
-localStorage key.
+toolbar and are shared across the browser origin via the `plan-ui`
+localStorage key; repos on the shared hub hostname share these UI preferences.
+Stock plans honor the OS reduced-motion preference as of v29.
 
 ## App skeletons — owned by appkit, not by this folder
 
 ```bash
-bun run plans app <slug> [--title "Title"] [--badge "TAG"] [--dest dir] [--recipe workspace|records]
+bun run plans app <slug> [--title "Title"] [--badge "TAG"] [--dest dir] [--recipe workspace|records|qa-review|review]
 appkit new <slug> --recipe workspace          # the same thing, direct
 ```
 
@@ -107,7 +108,9 @@ a keyed, path-prefixed mirror of every repo: `/` lists what is waiting on you,
 same origin. `bun run plans wait <slug>` then texts you the link.
 
 ```bash
-bun run plans hub remote on --provider tailscale      # private (tailnet); or funnel | ngrok | cloudflare (public)
+bun run plans hub remote on --provider cloudflare --tunnel-name plans-hub --hostname plans.cresa.dev
+# Existing permanent hostname on this machine. Keep its current tunnel and key.
+# Optional new setup: --provider tailscale is private; funnel/ngrok/Cloudflare are public.
 bun run plans hub notify set --channel imessage --to <your iMessage handle>
 bun run plans notify --test                           # get the link on your phone now
 bun run plans hub status                              # remote + notify lines at the bottom
@@ -179,3 +182,31 @@ only) exist too; the manager refuses Git WIP, symlinks, and custom forks.
 
 App skeletons are **not** hook-owned — see `~/.claude/templates/appkit/` and its
 `docs/ARCHITECTURE.md` for why that split exists.
+
+## QA screenshot reviewer
+
+`bun run plans app qa-review --recipe qa-review --title "QA Reviews"` creates one
+offline app for every review run. Add captures with
+`appkit qa add apps/qa-review.html --manifest receipts.json --id <unique-run-id>`.
+Carousel, notes, pass/issue status, run progress, and portable exports are included.
+Details: `~/.claude/templates/appkit/docs/QA-REVIEW.md`. Existing startup-hook
+delegation discovers this recipe without copying template internals into projects.
+
+## v30 guarded maintenance
+
+Startup reads the version from canonical `plans.mjs`; managed copies and their
+provenance now report the same version. Missing/incomplete provenance, symlinks,
+customized files, and `.no-claude-plans-upgrade` prevent automatic replacement.
+The default app recipe remains `workspace`; `review` is opt-in (AppKit 1.2.0).
+
+For an uncommitted but unchanged managed installation, explicit upgrades may
+use `--expect-installed <installedSourceHash>` alongside `--expect-source` after
+reviewing both snapshots. This only permits files still matching their manifest;
+custom edits remain blocked. The manager backs up original bytes and provenance.
+
+Existing authored pages are a separate operation: run
+`node ~/.claude/templates/plans/migrate-pages.mjs <repo>` to inspect recognized
+storage blocks, then `--expect <snapshotHash>` to apply exactly that preview.
+Only storage plumbing changes; authored content and submission tokens survive.
+Unrecognized/custom blocks require manual review. Old browser saves are kept;
+shared-origin legacy decisions require explicit recovery in the page.

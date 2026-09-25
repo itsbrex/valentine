@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// PLANS_TPL_VERSION: 28
+// PLANS_TPL_VERSION: 30
 // Plan-page toolchain for docs/plans/ — browse, create, and index interactive
 // HTML plan pages. Runs on `bun` (preferred, faster) or `node`.
 //
@@ -37,7 +37,8 @@
 //                                 # `tailscale serve` (tailnet-only, needs the Tailscale app
 //                                 # logged in on both devices); funnel = public via Tailscale
 //                                 # Funnel; ngrok / cloudflare = a launchd tunnel agent
-//                                 # (public, random URL). Every remote request needs the shared key
+//                                 # (public; named Cloudflare tunnels keep a permanent hostname).
+//                                 # Every remote request needs the shared key
 //                                 # from ~/.claude/plans-hub/hub.config.json (link carries it
 //                                 # once, then a cookie). Pages route as /<appName>/plans/….
 //   bun run plans hub notify [status|set --channel imessage|command|off --to <handle>|--transport osascript|imsg|--preview on|off|--command "…"|test]
@@ -102,7 +103,7 @@ import readline from 'node:readline';
 import { existsSync, readFileSync, rmSync, watch as fsWatch, statSync } from 'node:fs';
 import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // fileURLToPath, NOT .pathname: URL pathnames keep percent-encoding, so a repo
@@ -214,10 +215,10 @@ async function readLockOwner(ownerPath = SEQUENCE_LOCK_OWNER_PATH) {
   }
 }
 
-async function retireSequenceLock(expectedToken, reason) {
-  const quarantine = `${SEQUENCE_LOCK_PATH}.${reason}-${randomBytes(8).toString('hex')}`;
+async function retireSequenceLock(expectedToken, reason, lockPath = SEQUENCE_LOCK_PATH) {
+  const quarantine = `${lockPath}.${reason}-${randomBytes(8).toString('hex')}`;
   try {
-    await fs.rename(SEQUENCE_LOCK_PATH, quarantine);
+    await fs.rename(lockPath, quarantine);
   } catch (error) {
     if (error.code === 'ENOENT') return false;
     throw error;
@@ -230,15 +231,16 @@ async function retireSequenceLock(expectedToken, reason) {
   return true;
 }
 
-async function acquireSequenceLock() {
-  await fs.mkdir(PLANS_DIR, { recursive: true });
+async function acquireSequenceLock(lockPath = SEQUENCE_LOCK_PATH) {
+  const ownerPath = path.join(lockPath, "owner.json");
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
   const started = Date.now();
   const token = randomBytes(18).toString('base64url');
   const identity = processIdentity(process.pid);
   while (true) {
     try {
-      await fs.mkdir(SEQUENCE_LOCK_PATH, { mode: 0o700 });
-      await fs.writeFile(SEQUENCE_LOCK_OWNER_PATH, JSON.stringify({
+      await fs.mkdir(lockPath, { mode: 0o700 });
+      await fs.writeFile(ownerPath, JSON.stringify({
         pid: process.pid,
         processIdentity: identity,
         token,
@@ -248,22 +250,22 @@ async function acquireSequenceLock() {
       return async () => {
         if (released) return;
         released = true;
-        const owner = await readLockOwner();
+        const owner = await readLockOwner(ownerPath);
         if (owner?.token !== token) return;
-        await retireSequenceLock(token, 'release');
+        await retireSequenceLock(token, 'release', lockPath);
       };
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       try {
         const [stat, owner] = await Promise.all([
-          fs.stat(SEQUENCE_LOCK_PATH),
-          readLockOwner(),
+          fs.stat(lockPath),
+          readLockOwner(ownerPath),
         ]);
         if (
           Date.now() - stat.mtimeMs > SEQUENCE_LOCK_STALE_MS &&
           !lockOwnerIsAlive(owner)
         ) {
-          await retireSequenceLock(owner?.token, 'stale');
+          await retireSequenceLock(owner?.token, 'stale', lockPath);
           continue;
         }
       } catch (statError) {
@@ -271,7 +273,7 @@ async function acquireSequenceLock() {
         throw statError;
       }
       if (Date.now() - started >= SEQUENCE_LOCK_TIMEOUT_MS) {
-        throw new Error(`Timed out waiting for ${SEQUENCE_LOCK_PATH}`);
+        throw new Error(`Timed out waiting for ${lockPath}`);
       }
       await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -541,50 +543,53 @@ function hubLoaded() { return launchctl('print', `${hubDomain()}/${HUB_LABEL}`).
 async function hubRegister(argv) {
   const { flags } = parseFlags(argv);
   const quiet = 'quiet' in flags;
-  const cfg = await ensureConfig();
-  const port = await hubPort();
-  const rootReal = await fs.realpath(ROOT);
-  const reg = await readJsonOr(HUB_REGISTRY_PATH, { version: 1, apps: {} });
-  if (!reg.apps || typeof reg.apps !== 'object') reg.apps = {};
-  // Collision: the name belongs to a different, still-existing repo → suffix once.
-  let name = cfg.appName;
-  const owner = reg.apps[name];
-  if (owner && owner.root !== rootReal && existsSync(owner.root)) {
-    let n = 2;
-    while (reg.apps[`${name}-${n}`] && reg.apps[`${name}-${n}`].root !== rootReal && existsSync(reg.apps[`${name}-${n}`].root)) n++;
-    const next = `${name}-${n}`;
-    console.log(`[plans hub] appName "${name}" already routes to ${owner.root}; this repo now uses "${next}" (docs/plans/plans.config.json updated — commit it).`);
-    cfg.appName = validateAppName(next);
-    await writeConfig(cfg);
-    name = next;
-  }
-  const now = new Date().toISOString();
-  const prev = reg.apps[name] || {};
-  const isNew = prev.root !== rootReal;
-  const entry = { root: rootReal, registeredAt: prev.registeredAt || now, lastSeen: now, aliasedAt: prev.aliasedAt || null };
-  let aliased = false;
-  if (!process.env.PLANS_HUB_OFFLINE && have('portless')) {
-    const stale = !entry.aliasedAt || (Date.now() - Date.parse(entry.aliasedAt)) > 86_400_000;
-    if (stale || 'force' in flags) {
-      const r = spawnSync('portless', ['alias', name, String(port)], { encoding: 'utf8' });
-      if (r.status === 0) { entry.aliasedAt = now; aliased = true; }
-      else if (!quiet) console.error(`[plans hub] portless alias failed: ${String(r.stderr || r.stdout || '').trim()}`);
+  const release = await acquireSequenceLock(path.join(path.dirname(HUB_REGISTRY_PATH), ".registry.lock"));
+  try {
+    const cfg = await ensureConfig();
+    const port = await hubPort();
+    const rootReal = await fs.realpath(ROOT);
+    const reg = await readJsonOr(HUB_REGISTRY_PATH, { version: 1, apps: {} });
+    if (!reg.apps || typeof reg.apps !== 'object') reg.apps = {};
+    // Collision: the name belongs to a different, still-existing repo → suffix once.
+    let name = cfg.appName;
+    const owner = reg.apps[name];
+    if (owner && owner.root !== rootReal && existsSync(owner.root)) {
+      let n = 2;
+      while (reg.apps[`${name}-${n}`] && reg.apps[`${name}-${n}`].root !== rootReal && existsSync(reg.apps[`${name}-${n}`].root)) n++;
+      const next = `${name}-${n}`;
+      console.log(`[plans hub] appName "${name}" already routes to ${owner.root}; this repo now uses "${next}" (docs/plans/plans.config.json updated — commit it).`);
+      cfg.appName = validateAppName(next);
+      await writeConfig(cfg);
+      name = next;
     }
-  } else if (isNew && !quiet) {
-    console.log('[plans hub] portless is not installed — pages open from file://. `npm i -g portless && portless service install` enables https://<appName>.localhost.');
-  }
-  reg.apps[name] = entry;
-  await writeJsonAtomic(HUB_REGISTRY_PATH, reg);
-  if (!process.env.PLANS_HUB_OFFLINE && !(await hubHealth())) {
-    if (existsSync(HUB_PLIST_DST)) {
-      if (hubLoaded()) launchctl('kickstart', '-k', `${hubDomain()}/${HUB_LABEL}`);
-      else launchctl('bootstrap', hubDomain(), HUB_PLIST_DST);
+    const now = new Date().toISOString();
+    const prev = reg.apps[name] || {};
+    const isNew = prev.root !== rootReal;
+    const entry = { root: rootReal, registeredAt: prev.registeredAt || now, lastSeen: now, aliasedAt: prev.aliasedAt || null };
+    let aliased = false;
+    if (!process.env.PLANS_HUB_OFFLINE && have('portless')) {
+      const stale = !entry.aliasedAt || (Date.now() - Date.parse(entry.aliasedAt)) > 86_400_000;
+      if (stale || 'force' in flags) {
+        const r = spawnSync('portless', ['alias', name, String(port)], { encoding: 'utf8', timeout: 5000 });
+        if (r.status === 0) { entry.aliasedAt = now; aliased = true; }
+        else if (!quiet) console.error(`[plans hub] portless alias failed: ${String(r.stderr || r.stdout || '').trim()}`);
+      }
     } else if (isNew && !quiet) {
-      console.log(`[plans hub] hub agent not installed — run \`bun run plans hub install\` once; then https://${name}.localhost/plans/`);
+      console.log('[plans hub] portless is not installed — pages open from file://. `npm i -g portless && portless service install` enables https://<appName>.localhost.');
     }
-  }
-  if (!quiet) console.log(`[plans hub] ${name} -> ${rootReal}${aliased ? ' (portless alias registered)' : ''} · https://${name}.localhost/plans/`);
-  return name;
+    reg.apps[name] = entry;
+    await writeJsonAtomic(HUB_REGISTRY_PATH, reg);
+    if (!process.env.PLANS_HUB_OFFLINE && !(await hubHealth())) {
+      if (existsSync(HUB_PLIST_DST)) {
+        if (hubLoaded()) launchctl('kickstart', '-k', `${hubDomain()}/${HUB_LABEL}`);
+        else launchctl('bootstrap', hubDomain(), HUB_PLIST_DST);
+      } else if (isNew && !quiet) {
+        console.log(`[plans hub] hub agent not installed — run \`bun run plans hub install\` once; then https://${name}.localhost/plans/`);
+      }
+    }
+    if (!quiet) console.log(`[plans hub] ${name} -> ${rootReal}${aliased ? ' (portless alias registered)' : ''} · https://${name}.localhost/plans/`);
+    return name;
+  } finally { await release(); }
 }
 
 async function hubInstall() {
@@ -759,6 +764,13 @@ ${spec.args(port).map(a => `    <string>${escapeHtml(a)}</string>`).join('\n')}
 `;
 }
 function tunnelLoaded() { return launchctl('print', `${hubDomain()}/${HUB_TUNNEL_LABEL}`).status === 0; }
+function stopTailscaleRemote(remote) {
+  if (!remote?.enabled || !['tailscale', 'funnel'].includes(remote.provider)) return;
+  const bin = tailscaleBin();
+  if (!bin) throw new Error('Cannot retire previous remote: Tailscale CLI is unavailable.');
+  const result = spawnSync(bin, [remote.provider === 'funnel' ? 'funnel' : 'serve', '--yes', `--https=${Number(remote.tsPort) || TS_HUB_PORT}`, 'off'], { encoding: 'utf8', timeout: 20000 });
+  if (result.status !== 0) throw new Error(`Cannot retire previous ${remote.provider} listener: ${String(result.stderr || result.stdout || '').trim()}`);
+}
 async function hubRemote(argv) {
   const { flags, rest } = parseFlags(argv);
   const sub = rest[0] || 'status';
@@ -778,10 +790,7 @@ async function hubRemote(argv) {
   }
   if (sub === 'off') {
     const r = cfg.remote || {};
-    if (r.provider === 'tailscale' || r.provider === 'funnel') {
-      const bin = tailscaleBin();
-      if (bin) spawnSync(bin, [r.provider === 'funnel' ? 'funnel' : 'serve', '--yes', `--https=${Number(r.tsPort) || TS_HUB_PORT}`, 'off'], { encoding: 'utf8', timeout: 20000 });
-    }
+    stopTailscaleRemote(r);
     if (tunnelLoaded()) launchctl('bootout', `${hubDomain()}/${HUB_TUNNEL_LABEL}`);
     if (existsSync(HUB_TUNNEL_PLIST)) await fs.rm(HUB_TUNNEL_PLIST, { force: true });
     cfg.remote = { ...r, enabled: false, disabledAt: new Date().toISOString() };
@@ -791,6 +800,17 @@ async function hubRemote(argv) {
   }
   if (sub === 'on') {
     const provider = flags.provider || cfg.remote?.provider || 'tailscale';
+    if (!['tailscale', 'funnel', 'ngrok', 'cloudflare'].includes(provider)) fail(`unknown provider "${provider}"`);
+    const requestedPort = Number(flags['ts-port']) || Number(cfg.remote?.tsPort) || TS_HUB_PORT;
+    if ('ts-port' in flags && (!Number.isInteger(Number(flags['ts-port'])) || Number(flags['ts-port']) < 1 || Number(flags['ts-port']) > 65535)) fail('--ts-port must be an integer from 1 to 65535');
+    const previous = cfg.remote;
+    if (previous?.enabled && ['tailscale', 'funnel'].includes(previous.provider) &&
+        (previous.provider !== provider || (Number(previous.tsPort) || TS_HUB_PORT) !== requestedPort)) {
+      stopTailscaleRemote(previous);
+      // If activation fails, persisted state truthfully records that the old listener is off.
+      cfg.remote = { ...previous, enabled: false, disabledAt: new Date().toISOString() };
+      await writeHubConfig(cfg);
+    }
     const secret = cfg.remote?.secret || randomBytes(24).toString('base64url');
     let baseUrl = null;
     if (provider === 'tailscale' || provider === 'funnel') {
@@ -845,7 +865,7 @@ ingress:
     service: http://127.0.0.1:${port}
   - service: http_status:404
 `, { mode: 0o600 });
-      const routeArgs = ['tunnel', 'route', 'dns', ...(flags['overwrite-dns'] ? ['--overwrite-dns'] : []), name, hostname];
+      const routeArgs = ['tunnel', 'route', 'dns', ...('overwrite-dns' in flags ? ['--overwrite-dns'] : []), name, hostname];
       const route = spawnSync(bin, routeArgs, { encoding: 'utf8', timeout: 60000 });
       if (route.status !== 0) {
         // Tolerate the record already pointing at this tunnel; refuse to clobber anything else.
@@ -1163,6 +1183,32 @@ async function resolvePlan(slugArg, seqFlag) {
   const plan = plans.find(p => p.seq === seq) || null;
   return { slug, seq, plan };
 }
+function submissionHash(inbox) { return createHash('sha256').update(JSON.stringify(inbox)).digest('hex'); }
+function sameSubmission(done, inbox) {
+  return !!(done && inbox && typeof inbox.receivedAt === 'string' && done.submittedAt === inbox.receivedAt &&
+    (!done.submissionHash || done.submissionHash === submissionHash(inbox)));
+}
+function fullyImplemented(done, inbox) {
+  return sameSubmission(done, inbox) && Array.isArray(done.items) && Array.isArray(inbox.decisions) &&
+    inbox.decisions.every(d => d.status !== 'pending' && (d.status !== 'approved' || done.items.includes(d.id)));
+}
+function validateImport(value) {
+  if (!value || value.version !== 2 || value.kind !== 'plan-decisions' ||
+      typeof value.plan?.slug !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/.test(value.plan.slug) ||
+      !Number.isSafeInteger(value.plan.seq) || value.plan.seq < 1 ||
+      (value.plan.repo != null && typeof value.plan.repo !== 'string') ||
+      (value.submittedAt != null && (typeof value.submittedAt !== 'string' || !Number.isFinite(Date.parse(value.submittedAt)))) ||
+      !Array.isArray(value.decisions) || value.decisions.length > 500) return false;
+  const ids = new Set();
+  for (const item of value.decisions) {
+    if (!item || typeof item.id !== 'string' || !item.id || ids.has(item.id) ||
+        !['approved', 'rejected', 'pending'].includes(item.status) ||
+        !['group', 'kind', 'title', 'current', 'suggested'].every(k => typeof item[k] === 'string') ||
+        typeof item.edited !== 'boolean') return false;
+    ids.add(item.id);
+  }
+  return true;
+}
 async function cmdDone(argv) {
   const { flags, rest } = parseFlags(argv);
   const cfg = await ensureConfig();
@@ -1172,8 +1218,9 @@ async function cmdDone(argv) {
   const inboxFile = path.join(HUB_INBOX_DIR, cfg.appName, `${key}.json`);
   const inbox = await readJsonOr(inboxFile, null);
   if (!inbox && !('force' in flags)) { console.error(`[plans done] no submission in the hub inbox for ${key} (${inboxFile}). Wait for the reader to submit, import a legacy file (plans inbox import), or pass --force.`); process.exit(1); }
-  const approved = inbox ? inbox.decisions.filter(d => d.status === 'approved').map(d => d.id) : [];
-  const items = flags.items ? flags.items.split(',').map(x => x.trim()).filter(Boolean) : approved;
+  const approved = Array.isArray(inbox?.decisions) ? inbox.decisions.filter(d => d.status === 'approved').map(d => d.id) : [];
+  let items = 'items' in flags ? flags.items.split(',').map(x => x.trim()).filter(Boolean) : approved;
+  if (inbox && items.some(id => !approved.includes(id))) throw new Error('Only approved decision IDs from the current submission can be marked done.');
   const commits = flags.commit ? flags.commit.split(',').map(x => x.trim()).filter(Boolean) : [];
   let head = null;
   try { head = spawnSync('git', ['-C', ROOT, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).stdout.trim() || null; } catch {}
@@ -1181,8 +1228,10 @@ async function cmdDone(argv) {
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   const out = path.join(dir, `${key}.json`);
   const prev = await readJsonOr(out, null);
+  const matching = sameSubmission(prev, inbox) ? prev : null;
+  items = [...new Set([...(matching?.items || []).filter(id => approved.includes(id)), ...items])];
   const entry = { app: cfg.appName, slug: r.slug, seq: r.seq, title: r.plan?.title || r.slug, file: r.plan?.path || null, doneAt: new Date().toISOString(),
-    items, skipped: approved.filter(id => !items.includes(id)), note: flags.note || prev?.note || '', commits: [...new Set([...(prev?.commits || []), ...commits])], head, inbox: inbox ? inboxFile : null, submittedAt: inbox?.receivedAt || null };
+    items, skipped: approved.filter(id => !items.includes(id)), note: flags.note || matching?.note || '', commits: [...new Set([...(matching?.commits || []), ...commits])], head, inbox: inbox ? inboxFile : null, submittedAt: inbox?.receivedAt || null, submissionHash: inbox ? submissionHash(inbox) : null };
   await writeJsonAtomic(out, entry);
   console.log(out);
   console.error(`[plans done] ${cfg.appName} · ${key} — ${items.length} item${items.length === 1 ? '' : 's'} recorded as implemented${entry.skipped.length ? ` (${entry.skipped.length} approved item${entry.skipped.length === 1 ? '' : 's'} not listed: ${entry.skipped.join(', ')})` : ''}`);
@@ -1212,14 +1261,14 @@ async function lifecycle(app, root) {
     const waiting = await readJsonOr(path.join(HUB_WAITING_DIR, app, `${key}.json`), null);
     const inbox = await readJsonOr(path.join(HUB_INBOX_DIR, app, `${key}.json`), null);
     const done = await readJsonOr(path.join(HUB_DONE_DIR, app, `${key}.json`), null);
-    const counts = inbox ? inbox.decisions.reduce((c, d) => { c[d.status] = (c[d.status] || 0) + 1; return c; }, { approved: 0, rejected: 0, pending: 0 }) : null;
-    const approvedIds = inbox ? inbox.decisions.filter(d => d.status === 'approved').map(d => d.id) : [];
+    const counts = Array.isArray(inbox?.decisions) ? inbox.decisions.reduce((c, d) => { c[d.status] = (c[d.status] || 0) + 1; return c; }, { approved: 0, rejected: 0, pending: 0 }) : null;
+    const approvedIds = Array.isArray(inbox?.decisions) ? inbox.decisions.filter(d => d.status === 'approved').map(d => d.id) : [];
     let status = 'stamped';
     if (waiting && waiting.pid && processIsAlive(waiting.pid) && (!inbox || Date.parse(inbox.receivedAt) < Date.parse(waiting.startedAt))) status = 'waiting';
-    else if (inbox && done && Date.parse(done.doneAt) >= Date.parse(inbox.receivedAt) - 1000) status = 'implemented';
+    else if (fullyImplemented(done, inbox)) status = 'implemented';
     else if (inbox) status = 'submitted';
     const hint = gitHint(root, inbox?.receivedAt || date, seq, slug, approvedIds);
-    out.push({ app, root, file: n, seq, slug, title, date, status, submittedAt: inbox?.receivedAt || null, via: inbox?.via || null, counts, implementedAt: done?.doneAt || null, doneItems: done?.items?.length ?? null, doneNote: done?.note || '', commits: done?.commits || [], git: hint });
+    out.push({ app, root, file: n, seq, slug, title, date, status, submittedAt: inbox?.receivedAt || null, via: inbox?.via || null, counts, implementedAt: status === 'implemented' ? done.doneAt : null, doneItems: sameSubmission(done, inbox) ? done.items?.length ?? 0 : null, doneNote: done?.note || '', commits: done?.commits || [], git: hint });
   }
   return out;
 }
@@ -1241,8 +1290,8 @@ async function cmdStatus(argv) {
   let lastApp = null;
   for (const r of rows) {
     if (r.app !== lastApp) { console.log(`\n${r.app}  (${r.root})`); lastApp = r.app; }
-    const sub = r.submittedAt ? `submitted ${r.submittedAt.slice(0, 10)}${r.via === 'import' ? ' (imported)' : ''} · ${r.counts.approved} ✓ ${r.counts.rejected} ✗${r.counts.pending ? ` ${r.counts.pending} ○` : ''}` : 'not submitted';
-    const impl = r.implementedAt ? `implemented ${r.implementedAt.slice(0, 10)} (${r.doneItems} items${r.commits.length ? `, ${r.commits.length} commits` : ''})${r.doneNote ? ` — ${r.doneNote}` : ''}` : r.submittedAt ? 'NOT implemented (no `plans done` record)' : '';
+    const sub = r.submittedAt ? `submitted ${r.submittedAt.slice(0, 10)}${r.via === 'import' ? ' (imported)' : ''} · ${r.counts?.approved || 0} ✓ ${r.counts?.rejected || 0} ✗${r.counts?.pending ? ` ${r.counts.pending} ○` : ''}` : 'not submitted';
+    const impl = r.implementedAt ? `implemented ${r.implementedAt.slice(0, 10)} (${r.doneItems} items${r.commits.length ? `, ${r.commits.length} commits` : ''})${r.doneNote ? ` — ${r.doneNote}` : ''}` : r.submittedAt ? `NOT implemented (${r.doneItems || 0} approved items recorded for this submission)` : '';
     const git = r.git ? `${r.git.after} commits since${r.git.mentions.length ? `, ${r.git.mentions.length} mention it` : ''}` : 'no git';
     console.log(`  ${icon[r.status]} #${String(r.seq).padStart(3, '0')} ${r.title}  [${r.date}]`);
     console.log(`       ${sub}${impl ? ` · ${impl}` : ''} · git: ${git}`);
@@ -1260,16 +1309,20 @@ async function cmdInbox(argv) {
     try { files = (await fs.readdir(dl)).filter(n => n.endsWith('-decisions.json')).map(n => path.join(dl, n)); } catch {}
   }
   const reg = await readJsonOr(HUB_REGISTRY_PATH, { version: 1, apps: {} });
-  const byName = new Map();
-  for (const [app, e] of Object.entries(reg.apps || {})) if (e?.root) { byName.set(app, [app, e.root]); byName.set(path.basename(e.root), [app, e.root]); }
   let imported = 0;
   for (const file of files) {
-    const d = await readJsonOr(file, null);
-    if (!d || d.kind !== 'plan-decisions' || d.version !== 2 || !d.plan?.slug || !Number.isInteger(d.plan?.seq)) { console.log(`skip  ${path.basename(file)} — not a v2 plan-decisions payload`); continue; }
+    let d = null;
+    try { if ((await fs.stat(file)).size <= 1_000_000) d = await readJsonOr(file, null); } catch {}
+    if (!validateImport(d)) { console.log(`skip  ${path.basename(file)} — not a v2 plan-decisions payload`); continue; }
     const key = planKey(d.plan.slug, d.plan.seq);
-    // Match: repo name from the payload, else any registered repo that has the page.
-    let hit = d.plan.repo ? byName.get(d.plan.repo) : null;
-    if (!hit) for (const [app, e] of Object.entries(reg.apps || {})) { try { if ((await fs.readdir(path.join(e.root, 'docs', 'plans'))).some(n => n.endsWith(pageSuffix(d.plan.slug, d.plan.seq)))) { hit = [app, e.root]; break; } } catch {} }
+    // Never guess between repositories with the same slug/sequence or basename.
+    const candidates = [];
+    for (const [app, e] of Object.entries(reg.apps || {})) {
+      if (!e?.root || (d.plan.repo && d.plan.repo !== app && d.plan.repo !== path.basename(e.root))) continue;
+      try { if ((await fs.readdir(path.join(e.root, 'docs', 'plans'))).some(n => n.endsWith(pageSuffix(d.plan.slug, d.plan.seq)))) candidates.push([app, e.root]); } catch {}
+    }
+    if (candidates.length > 1) { console.log(`skip  ${path.basename(file)} — ambiguous repository; use its unique appName in plan.repo`); continue; }
+    const hit = candidates[0];
     if (!hit) {
       const guess = ['github', 'myscripts'].map(d2 => path.join(os.homedir(), d2, d.plan.repo || '')).find(p2 => d.plan.repo && existsSync(path.join(p2, 'docs', 'plans')));
       console.log(`skip  ${path.basename(file)} — repo "${d.plan.repo}" is not registered with the hub${guess ? ` (found ${guess}: run \`bun run plans hub register\` there, then re-run)` : ''}`);
@@ -1729,7 +1782,7 @@ async function writeIndex(argv) {
   const updated = new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 
   const apps = await listApps();
-  const appRows = apps.map(a => ({ file: path.relative(PLANS_DIR, a.path).split(path.sep).join('/'), title: a.title, name: a.name, date: new Date(a.mtime).toISOString().slice(0, 10) }));
+  const appRows = apps.map(a => ({ route: encodeURIComponent(path.basename(a.path)), file: path.relative(PLANS_DIR, a.path).split(path.sep).join('/'), title: a.title, name: a.name, date: new Date(a.mtime).toISOString().slice(0, 10) }));
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1763,7 +1816,7 @@ ${rows.length === 0 ? `    <div class="empty"><b>No plan pages yet</b>Stamp the 
   </div>
 ${appRows.length ? `  <h2 id="h-apps">Apps <span class="n" id="n-apps">${appRows.length}</span></h2>
   <div id="apps">
-${appRows.map(a => `    <a class="row" href="${escapeHtml(a.file)}">
+${appRows.map(a => `    <a class="row" data-app-file="${escapeHtml(a.route)}" href="${escapeHtml(a.file)}">
       <span class="seq">app</span>
       <span class="rt"><span class="t">${escapeHtml(a.title)}</span><span class="f">${escapeHtml(a.name)}</span></span>
       <span class="when">${escapeHtml(a.date)}</span>
@@ -1773,6 +1826,12 @@ ${appRows.map(a => `    <a class="row" href="${escapeHtml(a.file)}">
 </main>
 <script>
 (function(){
+  if (/^https?:$/.test(location.protocol)) {
+    var prefix = location.pathname.replace(/\\/plans\\/(?:index\\.html)?$/, '');
+    document.querySelectorAll('[data-app-file]').forEach(function(link){
+      link.setAttribute('href', prefix + '/apps/' + link.getAttribute('data-app-file'));
+    });
+  }
   var q = document.getElementById('q');
   function apply(){
     var v = q.value.trim().toLowerCase();
@@ -1798,7 +1857,7 @@ ${appRows.map(a => `    <a class="row" href="${escapeHtml(a.file)}">
 </html>
 `;
   await fs.mkdir(PLANS_DIR, { recursive: true });
-  await fs.writeFile(path.join(PLANS_DIR, 'index.html'), html);
+  await fs.writeFile(path.join(PLANS_DIR, 'index.html'), html.replace(/[ \t]+$/gm, ''));
   if (!quiet) console.log(path.join(PLANS_DIR, 'index.html'));
 }
 

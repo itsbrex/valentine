@@ -346,12 +346,12 @@ and the monolith app template) expose 12 themes in the command bar with live
 preview and on `t`; Paper darkens danger/warn/focus (and the plan template's
 kind-chip hues) for AA on light.
 
-**Motion policy (deliberate):** the OS `prefers-reduced-motion` media query is
-NOT honored by default — motion is full unless the person picks Motion:
-Reduced (toolbar button on plan pages, command-bar Setting in app shells),
-applied as `html[data-motion=reduced]` and persisted. This is a conscious
-departure from the usual accessibility default for these internal tools; the
-reduced setting remains one click away and sticky.
+**Motion policy:** the stock v29+ plan template honors OS
+`prefers-reduced-motion: reduce` for animations and transitions. Its persisted
+Motion: Reduced toggle additionally disables smooth scrolling. Mono and legacy
+AppKit shells retain their explicit toggle policy; recipes have their own CSS.
+Theme and motion preferences use the origin-wide `plan-ui` key (all repos share
+that preference when viewed through the same hub hostname).
 
 ## Color
 
@@ -490,8 +490,8 @@ Plan pages need no widescreen change — `.wrap` is already capped.
 navigate), state-badge pop on decide, hover lift, chip select, toast slide,
 progress-segment scale on hover. Auto-advance waits ~260ms so the state
 change is seen before the next card slides in. No page-load choreography.
-Reduced motion is the explicit `html[data-motion=reduced]` gate (see Motion
-policy under Theme) — it kills transitions, animations, and smooth scroll.
+Reduced motion uses the OS preference plus the explicit `html[data-motion=reduced]`
+gate in the stock plan template (see Motion policy under Theme).
 
 ## Semantic z-index scale
 
@@ -537,3 +537,33 @@ It must open from `file://` with no network and no build step — `bun run plans
 (or a double-click) always works offline. The only network call is the optional
 `127.0.0.1:<per-repo port>` listener ping/submit, which degrades gracefully
 (offline or busy-with-another-plan both fall back to a JSON download).
+
+
+## Review layout standard — September 23, 2026
+
+Follow the Target Enrichment reference (`https://allman-enrichment.localhost/apps/target-enrichment.html`) for new decision plans and results apps: embedded Geist fonts, warm charcoal/goldenrod dark theme and paper light theme, compact app header, short scope panel, compact metric tiles, full-width search, filter chips with counts, rows for scanning, and a detail inspector/drawer for evidence. Keep headings near 28–32px; avoid giant hero text and walls of expanded cards. Maintain keyboard access, visible focus, 44px primary touch targets, reduced-motion behavior, and mobile layouts.
+
+For results/evidence apps use `bun ~/.claude/templates/appkit/bin/appkit.mjs new <slug> --recipe review --root <repo> --title <title>`. Replace its `review-data` JSON with verified rows. Results are read-only; do not add decision submission actions to factual rows. For decision plans continue using `bun run plans new`; its managed template retains approval/rejection/editing, drafts, review validation and authenticated submission. Recommendations, submitted decisions and observed completion must remain distinct.
+
+Keep paired HTML and Markdown. Explain every verification count: what ran, fixture versus live evidence, skipped/blocked checks, and what a pass cannot prove. An OpenAPI operation is method plus path; changed fingerprints are not automatically breaking changes, and route coverage is not parameter coverage.
+
+Existing pages need an explicit, content-preserving migration. Preserve IDs, source hashes, legacy storage data, saved decisions, submission tokens and hub receipts. The Attio installation includes a surgical local v29 layout merge over existing WIP; its original `.plans-template.json` remains unchanged so managed drift remains visible. Do not force a managed upgrade over these local changes.
+
+## v30 storage and completion safety
+
+Decision keys include repository metadata and the existing per-page submission
+token. Tokens, authored decisions, and inbox receipts are not regenerated.
+Dedicated `<app>.localhost` origins copy legacy decisions and position once,
+without deleting old keys. Shared hub origins and `file://` cannot prove who
+owns an old `plans:<slug>:<seq>` entry; use **Recover older saved decisions** only
+when those choices belong to the displayed repo. Recovery keeps the old entry.
+Browser storage is origin-specific; changing hostname does not transfer data.
+
+`plans done --items` accumulates approved IDs only within the exact current
+receipt. Partial work remains submitted. A new receipt invalidates completion;
+pending decisions also prevent implemented status. Import validates the complete
+v2 payload and refuses ambiguous repository matches.
+
+New apps still default to AppKit's `workspace` recipe. `review` (AppKit 1.2.0)
+is an explicit read-only evidence recipe, not a replacement for interactive plan
+decisions. Existing apps remain authored outputs and need AppKit migration.
