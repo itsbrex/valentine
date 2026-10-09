@@ -10,19 +10,25 @@
 // Start it portless so no port is ever hardcoded:
 //   bun run plans serve --name crm-playground npx tsx apps/crm-playground-server.ts
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { loadConfig, activeCrms } from "../src/config.js";
 import { SalesforceSession } from "../src/connectors/salesforce.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGE = join(HERE, "crm-playground.html");
 // Local review exports (gitignored). Served read-only from this one folder, by
-// basename only — the name regex blocks any path separator or traversal.
+// basename only — reviewCsvName() blocks any path separator or traversal.
 const REVIEW = join(HERE, "..", "review-local");
+/** A plain .csv basename in REVIEW, or null. Spaces and parentheses are fine
+ *  ("Attio export (1).csv"); separators, NULs and dotfiles are not. */
+function reviewCsvName(name: string): string | null {
+  if (!/\.csv$/i.test(name) || name.startsWith(".") || name.includes("\0")) return null;
+  if (name !== basename(name) || name.includes("\\")) return null;
+  return name;
+}
 // Saved grid views, keyed by dataset ("csv:<file>", "query:salesforce", "bulk").
 // Each dataset keeps the last grid state (restored on load) and named views.
 const VIEWS = process.env.VALENTINE_PLAYGROUND_VIEWS ?? join(homedir(), ".valentine", "playground-views.json");
@@ -128,6 +134,7 @@ const ACCT18: [string, string][] = [
 ];
 const ACCT18_BARE: [string, string][] = [["Id", "sf_id"], ["Name", "sf_name"], ["Website", "website"], ["OwnerId", "owner_id"], ["Owner.Name", "owner"], ["LastActivityDate", "last_activity"]];
 let acctFull = true;
+const ACCT_LIMIT = 2000;
 function flatAcct(r: any, map: [string, string][]): Record<string, unknown> {
   const o: Record<string, unknown> = {};
   for (const [col, name] of map) {
@@ -141,14 +148,14 @@ function flatAcct(r: any, map: [string, string][]): Record<string, unknown> {
 async function acctBatch(where: string): Promise<{ rows: any[]; map: [string, string][] }> {
   if (acctFull) {
     try {
-      const rows = await sf!.soql(`SELECT ${ACCT18.map((f) => f[0]).join(", ")} FROM Account WHERE ${where} LIMIT 2000`);
+      const rows = await sf!.soql(`SELECT ${ACCT18.map((f) => f[0]).join(", ")} FROM Account WHERE ${where} LIMIT ${ACCT_LIMIT}`);
       return { rows, map: ACCT18 };
     } catch (e: any) {
       if (!/INVALID_FIELD|No such column|FIELD_INTEGRITY/i.test(String(e?.message))) throw e;
       acctFull = false;
     }
   }
-  const rows = await sf!.soql(`SELECT ${ACCT18_BARE.map((f) => f[0]).join(", ")} FROM Account WHERE ${where} LIMIT 2000`);
+  const rows = await sf!.soql(`SELECT ${ACCT18_BARE.map((f) => f[0]).join(", ")} FROM Account WHERE ${where} LIMIT ${ACCT_LIMIT}`);
   return { rows, map: ACCT18_BARE };
 }
 
@@ -156,22 +163,31 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   try {
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/playground")) {
+      const page = await readFile(PAGE);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(readFileSync(PAGE));
+      res.end(page);
       return;
     }
 
     // List the CSVs in review-local/ (basename + size + approx row count).
     if (req.method === "GET" && url.pathname === "/api/files") {
       try {
-        const files = readdirSync(REVIEW)
-          .filter((f) => /\.csv$/i.test(f))
-          .map((f) => {
-            const p = join(REVIEW, f);
-            let rows = 0;
-            try { rows = Math.max(0, readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).length - 1); } catch {}
-            return { name: f, size: statSync(p).size, rows };
-          })
+        const names = (await readdir(REVIEW)).filter((f) => reviewCsvName(f));
+        const files = (
+          await Promise.all(
+            names.map(async (f) => {
+              const p = join(REVIEW, f);
+              try {
+                const [text, st] = await Promise.all([readFile(p, "utf8"), stat(p)]);
+                const rows = Math.max(0, text.split("\n").filter((l) => l.trim()).length - 1);
+                return { name: f, size: st.size, rows };
+              } catch {
+                return null; // vanished or unreadable between readdir and read
+              }
+            }),
+          )
+        )
+          .filter((f) => f !== null)
           .sort((a, b) => a.name.localeCompare(b.name));
         return json(res, 200, { files });
       } catch {
@@ -181,12 +197,12 @@ const server = createServer(async (req, res) => {
 
     // Serve one CSV's raw text. basename only — no separators, no traversal.
     if (req.method === "GET" && url.pathname === "/api/file") {
-      const name = url.searchParams.get("name") ?? "";
-      if (!/^[\w.-]+\.csv$/i.test(name)) return json(res, 400, { error: "bad file name" });
+      const name = reviewCsvName(url.searchParams.get("name") ?? "");
+      if (!name) return json(res, 400, { error: "bad file name" });
       const p = join(REVIEW, name);
       if (!p.startsWith(REVIEW + "/")) return json(res, 400, { error: "outside review folder" });
       try {
-        const text = readFileSync(p, "utf8");
+        const text = await readFile(p, "utf8");
         res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store" });
         res.end(text);
       } catch {
@@ -236,8 +252,17 @@ const server = createServer(async (req, res) => {
       try {
         assertSelect(q);
         const t0 = Date.now();
-        const rows = await sf.soql(q);
-        return json(res, 200, { rows, count: rows.length, elapsedMs: Date.now() - t0 });
+        // request(), not soql(): keep totalSize/done so a result past the first
+        // batch (2,000 rows) says so instead of passing for the whole answer.
+        const data = await sf.request("GET", `/query?q=${encodeURIComponent(q)}`);
+        const rows: any[] = data?.records ?? [];
+        return json(res, 200, {
+          rows,
+          count: rows.length,
+          totalSize: data?.totalSize ?? rows.length,
+          done: data?.done !== false,
+          elapsedMs: Date.now() - t0,
+        });
       } catch (e: any) {
         return json(res, 200, { error: String(e?.message ?? e) });
       }
@@ -260,8 +285,11 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/bulk") {
       if (!sf) return json(res, 400, { error: "Salesforce is not configured" });
       const { domains, field } = await readBody(req);
+      // Normalize the way the account side is normalized below (scheme, www.,
+      // path, an email's local part), or "www.acme.com" can never equal the
+      // matched host "acme.com" and is reported missing.
       const list: string[] = Array.isArray(domains)
-        ? domains.map((d) => String(d).trim().toLowerCase()).filter((d) => d.includes("."))
+        ? [...new Set(domains.map((d) => host(String(d).split("@").pop()) ?? "").filter((d) => d.includes(".")))]
         : [];
       if (!list.length) return json(res, 400, { error: "no domains" });
       const useEmail = field === "email";
@@ -269,11 +297,24 @@ const server = createServer(async (req, res) => {
       const t0 = Date.now();
       // Each matched account carries the full 18-field Ownership Desk set.
       const matched: Record<string, Record<string, unknown>[]> = {};
+      const truncated: string[] = [];
       try {
-        for (let i = 0; i < list.length; i += 100) {
-          const chunk = list.slice(i, i + 100);
+        const queue: string[][] = [];
+        for (let i = 0; i < list.length; i += 100) queue.push(list.slice(i, i + 100));
+        while (queue.length) {
+          const chunk = queue.shift()!;
           const where = chunk.map((d) => (useEmail ? `Account_Owner_s_Email__c LIKE '%@${esc(d)}'` : `Website LIKE '%${esc(d)}%'`)).join(" OR ");
           const { rows, map } = await acctBatch(where);
+          // A full page means LIMIT cut the answer: split the batch and ask
+          // again, so no domain is reported missing because its rows fell off.
+          if (rows.length >= ACCT_LIMIT) {
+            if (chunk.length > 1) {
+              const mid = Math.ceil(chunk.length / 2);
+              queue.unshift(chunk.slice(0, mid), chunk.slice(mid));
+              continue;
+            }
+            truncated.push(chunk[0]);
+          }
           const want = new Set(chunk);
           for (const r of rows) {
             const h = useEmail ? host(String(r.Account_Owner_s_Email__c ?? "").split("@")[1]) : host(r.Website);
@@ -297,6 +338,7 @@ const server = createServer(async (req, res) => {
         },
         notInSf,
         dupes,
+        truncated,
         elapsedMs: Date.now() - t0,
       });
     }

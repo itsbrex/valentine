@@ -947,11 +947,12 @@ function flattenSf(rows){
     return o; // sibling ids for linkify are read from o.__raw, never forced as columns
   });
 }
-function flattenAttio(rows){
+function flattenAttio(rows,object){
   return rows.map((r)=>{
     const v=r.values||{};
     const g=(s)=>{const a=v[s];if(!a||!a.length)return "";const x=a[0];return x.option?.title??x.value??x.domain??x.full_name??"";};
-    return {__raw:r,__crm:"attio",__id:r.id?.record_id||null,__object:"companies",
+    // linkify reads __object to pick /person/ vs /company/ record URLs
+    return {__raw:r,__crm:"attio",__id:r.id?.record_id||null,__object:object||"companies",
       id:r.id?.record_id, name:g("name"), domain:(v.domains&&v.domains[0]?.domain)||"",
       linkedin:g("linkedin"), account_owner:g("account_owner"), web_url:r.web_url};
   });
@@ -968,6 +969,12 @@ function toDay(v){ // local midnight (ms) of a date/datetime value, NaN when not
   if(isBlank(v))return NaN; const s=String(v).trim(); if(_dates.has(s))return _dates.get(s);
   let t=NaN; if(RE_DATE.test(s)){const d=new Date(s.length===10?s+"T00:00:00":s); if(!isNaN(d)){d.setHours(0,0,0,0);t=d.getTime();}}
   _dates.set(s,t); return t;
+}
+const _times=new Map();
+function toTime(v){ // full timestamp (ms) for sorting, so same-day datetimes keep their order; NaN when not a date
+  if(isBlank(v))return NaN; const s=String(v).trim(); if(_times.has(s))return _times.get(s);
+  const t=RE_DATE.test(s)?new Date(s.length===10?s+"T00:00:00":s).getTime():NaN;
+  _times.set(s,t); return t;
 }
 const today0=()=>{const d=new Date();d.setHours(0,0,0,0);return d.getTime();};
 function shiftDay(t,n,u){const d=new Date(t); if(u==="d")d.setDate(d.getDate()+n); else if(u==="w")d.setDate(d.getDate()+7*n); else if(u==="m")d.setMonth(d.getMonth()+n); else d.setFullYear(d.getFullYear()+n); return d.getTime();}
@@ -1238,7 +1245,7 @@ class Grid{
     const rs=this.activeRules().map(r=>({r,m:this.meta(r.col)}));
     if(rs.length){const any=this.match==="any"; idx=idx.filter(i=>any?rs.some(({r,m})=>testRule(r,this.cell(i,r.col),m)):rs.every(({r,m})=>testRule(r,this.cell(i,r.col),m)));}
     if(this.sorts.length){
-      const key=(v,t)=>t==="number"?toNum(v):t==="date"?toDay(v):NaN;
+      const key=(v,t)=>t==="number"?toNum(v):t==="date"?toTime(v):NaN;
       const coll=new Intl.Collator(undefined,{numeric:true,sensitivity:"base"});
       const specs=this.sorts.map(s=>({...s,t:this.meta(s.col).type}));
       idx.sort((a,b)=>{
@@ -1583,19 +1590,24 @@ function mountFindReplace(grid,mountId){
     <button class="btn-ghost" id="frExport">Export change-set CSV</button></div>
   <div class="frprev" id="frPrev"></div>`;
   const el=(sel)=>p.querySelector(sel);
-  const cols=grid.cols; const sel=el("#frCol"); sel.innerHTML='<option value="__all">(all visible columns)</option>'+cols.map(c=>`<option>${c}</option>`).join("");
+  // column names come from CSV headers: options are built as text, never parsed as HTML
+  const cols=grid.cols; const sel=el("#frCol"); sel.innerHTML='<option value="__all">(all visible columns)</option>'; for(const c of cols)sel.appendChild(new Option(c,c));
   function scopeIdx(){const s=el("#frScope").value; if(s==="all")return grid.rows.map((_,i)=>i); if(s==="selected")return[...grid.sel]; return grid.view();}
   function targetCols(){const c=el("#frCol").value; return c==="__all"?grid.cols.filter(x=>grid.vis.has(x)):[c];}
-  function matcher(){const f=el("#frFind").value; if(!f)return null; if(el("#frRe").checked){try{return new RegExp(f,el("#frCase").checked?"g":"gi");}catch(e){toast("bad regex");return null;}} return {lit:f,ci:!el("#frCase").checked};}
-  function apply(cell){const m=matcher(); if(m==null)return null; const rep=el("#frRepl").value; const whole=el("#frWhole").checked; const s=cell==null?"":String(cell);
-    if(whole){const hit=(m.lit!=null)?(m.ci?s.toLowerCase()===m.lit.toLowerCase():s===m.lit):new RegExp("^(?:"+el("#frFind").value+")$",el("#frCase").checked?"":"i").test(s); return hit?rep:null;}
+  // built once per run, not per cell: a bad regex is one toast, not one per cell
+  function matcher(){const f=el("#frFind").value; if(!f)return null; const cs=el("#frCase").checked, whole=el("#frWhole").checked;
+    if(el("#frRe").checked){try{return {re:whole?new RegExp("^(?:"+f+")$",cs?"":"i"):new RegExp(f,cs?"g":"gi"),whole};}catch(e){return {bad:true};}}
+    return {lit:f,ci:!cs,whole};}
+  function apply(cell,m,rep){const s=cell==null?"":String(cell);
+    if(m.whole){const hit=(m.lit!=null)?(m.ci?s.toLowerCase()===m.lit.toLowerCase():s===m.lit):m.re.test(s); return hit?rep:null;}
     if(m.lit!=null){const idx=m.ci?s.toLowerCase().indexOf(m.lit.toLowerCase()):s.indexOf(m.lit); if(idx<0)return null; // literal replace-all
       let out="",rest=s,low=m.lit.toLowerCase(); while(true){const j=m.ci?rest.toLowerCase().indexOf(low):rest.indexOf(m.lit); if(j<0){out+=rest;break;} out+=rest.slice(0,j)+rep; rest=rest.slice(j+m.lit.length);} return out===s?null:out;}
-    const nv=s.replace(m,rep); return nv===s?null:nv;}
+    const nv=s.replace(m.re,rep); return nv===s?null:nv;}
   function run(preview){
-    const idx=scopeIdx(),tcols=targetCols(),changes=[];
-    for(const i of idx)for(const c of tcols){const cur=grid.edits.has(i+"|"+c)?grid.edits.get(i+"|"+c):grid.rows[i][c]; const nv=apply(cur); if(nv!=null&&String(nv)!==String(cur??""))changes.push({i,c,old:cur,nv});}
-    if(preview){const pv=el("#frPrev");pv.classList.add("show"); if(!changes.length){pv.textContent="no matches in scope";return;} pv.innerHTML=`<b>${changes.length}</b> cell(s) would change:<br>`+changes.slice(0,40).map(ch=>`${grid.rows[ch.i].__id||("#"+(ch.i+1))} · ${ch.c}: <del>${esc(ch.old)}</del> → <ins>${esc(ch.nv)}</ins>`).join("<br>")+(changes.length>40?`<br>… +${changes.length-40} more`:"");}
+    const m=matcher(); if(m&&m.bad){toast("bad regex");return 0;}
+    const idx=scopeIdx(),tcols=targetCols(),changes=[],rep=el("#frRepl").value;
+    if(m)for(const i of idx)for(const c of tcols){const cur=grid.edits.has(i+"|"+c)?grid.edits.get(i+"|"+c):grid.rows[i][c]; const nv=apply(cur,m,rep); if(nv!=null&&String(nv)!==String(cur??""))changes.push({i,c,old:cur,nv});}
+    if(preview){const pv=el("#frPrev");pv.classList.add("show"); if(!changes.length){pv.textContent="no matches in scope";return;} pv.innerHTML=`<b>${changes.length}</b> cell(s) would change:<br>`+changes.slice(0,40).map(ch=>`${esc(grid.rows[ch.i].__id||("#"+(ch.i+1)))} · ${esc(ch.c)}: <del>${esc(ch.old)}</del> → <ins>${esc(ch.nv)}</ins>`).join("<br>")+(changes.length>40?`<br>… +${changes.length-40} more`:"");}
     else{for(const ch of changes)grid.edits.set(ch.i+"|"+ch.c,ch.nv); grid.render(); mountFindReplace(grid,mountId); toast(`${changes.length} cell(s) edited`);}
     return changes.length;
   }
@@ -1635,13 +1647,15 @@ const qGrid=new Grid($("qGridPanel"));
 async function runQuery(){
   const q=$("q").value.trim();$("qErr").classList.remove("show");$("qStat").textContent="running…";$("runBtn").disabled=true;
   try{
-    let data;
+    let data; const obj=$("attioObject").value;
     if(SRC==="salesforce")data=await(await fetch("/api/soql",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({q})})).json();
-    else{let filter=null;if(q){try{filter=JSON.parse(q);}catch{throw new Error("Attio filter must be valid JSON.");}}data=await(await fetch("/api/attio",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({object:$("attioObject").value,filter,limit:+$("attioLimit").value})})).json();}
+    else{let filter=null;if(q){try{filter=JSON.parse(q);}catch{throw new Error("Attio filter must be valid JSON.");}}data=await(await fetch("/api/attio",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({object:obj,filter,limit:+$("attioLimit").value})})).json();}
     if(data.error)throw new Error(data.error);
-    const rows=data.rows||[]; const disp=SRC==="attio"?flattenAttio(rows):flattenSf(rows);
+    const rows=data.rows||[]; const disp=SRC==="attio"?flattenAttio(rows,obj):flattenSf(rows);
     qGrid.load(disp,"query:"+SRC); mountFindReplace(qGrid);
-    $("qStat").textContent=`${data.count} row(s) · ${data.elapsedMs} ms`+(data.count>1000?" · showing first 1000":"");
+    // Salesforce answers one batch (≤2,000 rows); say so when there were more
+    const more=data.done===false?` of ${Number(data.totalSize).toLocaleString()} (first batch only — narrow the query)`:"";
+    $("qStat").textContent=`${data.count} row(s)${more} · ${data.elapsedMs} ms`+(data.count>1000?" · showing first 1000":"");
   }catch(e){$("qErr").textContent=String(e.message||e);$("qErr").classList.add("show");$("qStat").textContent="";$("qGridPanel").hidden=true;$("frPanel").hidden=true;}
   finally{$("runBtn").disabled=false;}
 }
@@ -1660,7 +1674,8 @@ async function runBulk(){
     const s=data.summary;$("bulkTiles").hidden=false;
     $("bulkTiles").innerHTML=tile(s.checked,"checked")+tile(s.in_salesforce,"in salesforce","ok")+tile(s.not_in_salesforce,"not in SF")+tile(s.duplicates,"dup accounts","warn");
     const flat=[];for(const[dom,acc] of Object.entries(data.matched))for(const a of acc)flat.push({__raw:{domain:dom,...a},__crm:"salesforce",__id:a.sf_id||a.id,__object:"Account",domain:dom,duplicate:acc.length>1?"yes":"",...a});
-    bulkGrid.load(flat,"bulk");$("bulkStat").textContent=`${data.checked} checked · ${data.elapsedMs} ms · ${flat.length} matched account(s), 18 fields each`;
+    const cut=(data.truncated||[]).length?` · ${data.truncated.length} domain(s) matched 2,000+ accounts, results cut: ${data.truncated.join(", ")}`:"";
+    bulkGrid.load(flat,"bulk");$("bulkStat").textContent=`${data.checked} checked · ${data.elapsedMs} ms · ${flat.length} matched account(s), 18 fields each${cut}`;
   }catch(e){$("bulkErr").textContent=String(e.message||e);$("bulkErr").classList.add("show");$("bulkStat").textContent="";}
   finally{$("bulkBtn").disabled=false;}
 }
@@ -1694,7 +1709,7 @@ async function loadFileList(){
     const d=await(await fetch("/api/files")).json();
     const box=$("fileList");box.innerHTML="";
     if(!d.files||!d.files.length){box.innerHTML='<span class="stat">no CSVs in review-local/</span>';return;}
-    for(const f of d.files){const b=document.createElement("button");b.dataset.name=f.name;b.setAttribute("aria-pressed",f.name===FILE?"true":"false");b.innerHTML=`${f.name} <span class="meta">${f.rows.toLocaleString()} rows · ${(f.size/1024).toFixed(0)} KB</span>`;b.onclick=()=>loadFile(f.name);box.appendChild(b);}
+    for(const f of d.files){const b=document.createElement("button");b.dataset.name=f.name;b.setAttribute("aria-pressed",f.name===FILE?"true":"false");const m=document.createElement("span");m.className="meta";m.textContent=`${f.rows.toLocaleString()} rows · ${(f.size/1024).toFixed(0)} KB`;b.append(f.name+" ",m);b.onclick=()=>loadFile(f.name);box.appendChild(b);}
   }catch(e){$("filesErr").textContent="could not list files: "+(e.message||e);$("filesErr").classList.add("show");}
 }
 let FILE=null;
