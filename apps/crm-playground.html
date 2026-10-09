@@ -573,6 +573,20 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
   th.vcol,td.vcol{position:sticky;right:0;width:52px;padding-inline:8px;box-shadow:inset 1px 0 0 var(--line)}
   td.vcol{z-index:1}thead th.vcol{z-index:4}
   .viewbtn{height:24px;padding:0 8px;font:500 11px var(--mono);border:1px solid var(--line-2);border-radius:var(--r-chip);background:var(--bg-2);color:var(--txt-2)}
+  /* cell editing never shares a link's hit target (Notion-style): one floating pencil moves to the
+     hovered / focused / tapped cell; F2 or Enter edits from the keyboard (APG grid pattern) */
+  tbody td[data-c]{position:relative}
+  .cedit{position:absolute;right:4px;top:50%;translate:0 -50%;width:22px;height:22px;min-height:0;display:grid;place-items:center;padding:0;
+    border:0;border-radius:var(--r-chip);background:var(--bg-3);color:var(--txt-2);box-shadow:0 0 0 1px var(--line-2),0 2px 6px rgb(0 0 0/.25);
+    cursor:pointer;opacity:0;transition:opacity 120ms ease,color 120ms ease,background-color 120ms ease}
+  .cedit svg{width:13px;height:13px}
+  td:hover>.cedit,td:focus>.cedit,td:focus-within>.cedit{opacity:1}
+  @media (hover:none){.cedit{opacity:1}}
+  @media (hover:hover) and (pointer:fine){.cedit:hover{color:var(--txt);background:var(--elev-2)}}
+  /* keyboard focus: the whole cell shows the ring, whether the cell or its link/checkbox holds focus */
+  tbody td:focus-visible,tbody td:has(>:focus-visible){outline:2px solid var(--accent);outline-offset:-2px}
+  tbody td>a:focus-visible,tbody td>.ck:focus-visible,tbody td>.viewbtn:focus-visible{outline:none}
+  tbody td{scroll-margin:76px 56px 8px 100px} /* clear the sticky header rows and pinned columns */
 
   .foot{display:flex;justify-content:space-between;align-items:center;gap:6px 12px;flex-wrap:wrap;
     padding:12px 0 max(12px,env(safe-area-inset-bottom));border-top:1px solid var(--line);font:12px var(--mono);color:var(--txt-3)}
@@ -742,6 +756,7 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
     .presets button{height:40px}
     .viewbtn{height:36px;min-width:44px}
     .ck{width:22px;height:22px}
+    .cedit{width:36px;height:36px;min-height:36px}.cedit svg{width:16px;height:16px}
     tr.filt input{height:36px}
   }
 
@@ -779,6 +794,9 @@ html[data-motion=reduced] *,html[data-motion=reduced] *::before,html[data-motion
     .grid tbody td.ckcol{position:absolute;top:4px;right:4px;left:auto;width:auto;min-width:0;padding:6px}
     .grid tbody td.vcol{position:absolute;top:6px;right:48px;left:auto;width:auto;padding:4px}
     .grid tbody td.idx{display:none}
+    .grid tbody td[data-c]{position:relative;scroll-margin-top:calc(var(--top-h) + 150px)}
+    .grid tbody td[data-c]>.cedit{top:4px;translate:none}
+    .grid tbody td.lead>.cedit{right:100px}
     .toasts{left:12px;right:12px;transform:none}
     .toast{width:100%;text-align:center}
   }
@@ -1198,9 +1216,9 @@ const stateSummary=(st)=>{const r=(st.rules||[]).length,s=(st.sorts||[]).length,
 
 /* ---------- Grid ---------- */
 class Grid{
-  constructor(panel){this.panel=panel;this.rows=[];this.cols=[];this.vis=new Set();this.sorts=[];this.rules=[];this.match="all";this.types={};this.q="";this.sel=new Set();this.edits=new Map();this.lastAnchor=null;this.onEdit=null;this.showBuilder=false;this._rid=0;this.key=null;this.viewName=null;GRIDS.push(this);}
+  constructor(panel){this.panel=panel;this.rows=[];this.cols=[];this.vis=new Set();this.sorts=[];this.rules=[];this.match="all";this.types={};this.q="";this.sel=new Set();this.edits=new Map();this.lastAnchor=null;this.onEdit=null;this.showBuilder=false;this._rid=0;this.key=null;this.viewName=null;this.cur=null;this._tab=null;this._pen=null;GRIDS.push(this);}
   load(disp,key){
-    this.flush(); this.rows=disp; this.key=key||null; this.viewName=null;
+    this.flush(); this.rows=disp; this.key=key||null; this.viewName=null; this.cur=null;
     const c=[]; for(const r of disp)for(const k of Object.keys(r))if(!k.startsWith("__")&&!c.includes(k))c.push(k);
     this.cols=c; this.vis=new Set(c); this.sorts=[]; this.rules=[]; this.match="all"; this.q=""; this.sel.clear(); this.edits.clear(); this.showBuilder=false;
     this.types={}; for(const col of c)this.types[col]=inferCol(col,disp.map(r=>r[col]));
@@ -1284,6 +1302,7 @@ class Grid{
   renderBody(){this.renderHead(); this.renderRows(); this.renderChips();}
   soon(fn){clearTimeout(this._t); this._t=setTimeout(fn,this.rows.length>3000?140:40);}
   render(){
+    const refocus=this.hasFocus(); // a full re-render (e.g. a row checkbox) keeps keyboard focus in place
     const p=this.panel; p.hidden=false; p.innerHTML="";
     const vcols=this.cols.filter(c=>this.vis.has(c));
     const tb=document.createElement("div");tb.className="gtoolbar";
@@ -1312,9 +1331,69 @@ class Grid{
     this._fb=document.createElement("div"); this._fb.className="fbuilder"; this._fb.id="_fb"; p.appendChild(this._fb);
     const wrap=document.createElement("div");wrap.className="tblwrap";
     const tbl=document.createElement("table"); this._tbl=tbl; wrap.appendChild(tbl); p.appendChild(wrap);
+    const help=document.createElement("span"); help.className="sr-only"; help.id="_gk"+GRIDS.indexOf(this); help.textContent="Arrow keys, Home, End and Page keys move between cells. F2 or Enter edits a cell, Escape cancels. A link cell opens with Enter.";
+    tbl.setAttribute("role","grid"); tbl.setAttribute("aria-describedby",help.id); wrap.appendChild(help);
     this._thead=document.createElement("thead"); this._tbody=document.createElement("tbody"); tbl.append(this._thead,this._tbody);
     tbl.addEventListener("contextmenu",(e)=>this.cellMenu(e));
+    const body=this._tbody;
+    body.addEventListener("keydown",(e)=>this.gridKey(e));
+    body.addEventListener("focusin",(e)=>this.cellFocus(e));
+    body.addEventListener("pointerover",(e)=>{const td=e.target.closest("td[data-c]"); if(td)this.penTo(td);});
+    body.addEventListener("pointerleave",()=>{const pen=this._pen,td=pen&&pen.parentElement; if(td&&!td.contains(document.activeElement))pen.remove();});
+    // a link opens on its first click only: the second click of a double-click would open it again
+    body.addEventListener("click",(e)=>{if(e.detail>1&&e.target.closest("td>a"))e.preventDefault();});
+    // double-click edits a plain cell or a link cell's padding — never the link itself
+    body.addEventListener("dblclick",(e)=>{const td=e.target.closest("td[data-c]"); if(td&&!e.target.closest("a,input,.cedit"))this.editCell(+td.parentElement.dataset.i,td.dataset.c,td);});
     this.renderHead(); this.renderRows(); this.renderChips(); this.renderBuilder();
+    if(refocus)this.focusCur(false);
+  }
+  /* ---- keyboard focus: one roving tab stop over the body cells (WAI-ARIA APG grid pattern).
+     A cell holding a link, checkbox or button focuses that widget; any other cell focuses itself. ---- */
+  cellEl(i,k){const tr=this._tbody&&this._tbody.querySelector(`tr[data-i="${i}"]`); return tr?[...tr.cells].find(td=>td.dataset.k===k)||null:null;}
+  focusTarget(td){return td.querySelector(":scope>a,:scope>input.ck,:scope>button.viewbtn")||td;}
+  setTab(td){const t=this.focusTarget(td); if(this._tab&&this._tab!==t)this._tab.tabIndex=-1; t.tabIndex=0; this._tab=t;}
+  hasFocus(){const a=document.activeElement; return !!(a&&a!==document.body&&this._tbody&&this._tbody.contains(a));}
+  homeCell(){ // the current cell if still rendered, else the same column in its row or the first row, else the first cell
+    const tb=this._tbody, c=this.cur; if(!tb)return null;
+    if(c){const td=this.cellEl(c.i,c.k); if(td)return td;
+      const tr=tb.querySelector(`tr[data-i="${c.i}"]`)||tb.querySelector("tr[data-i]"); if(tr)return [...tr.cells].find(td=>td.dataset.k===c.k)||tr.querySelector("td[data-c]");}
+    return tb.querySelector("td[data-c]")||tb.querySelector("td[data-k]");
+  }
+  focusCur(scroll){const td=this.homeCell(); if(!td)return; this.setTab(td); this.focusTarget(td).focus({preventScroll:true}); if(scroll)td.scrollIntoView({block:"nearest",inline:"nearest"});}
+  cellFocus(e){
+    const td=e.target.closest("td[data-k]"); if(!td)return;
+    this.cur={i:+td.parentElement.dataset.i,k:td.dataset.k};
+    if(!e.target.matches("input[type=text]"))this.setTab(td); // not while the cell editor is open
+    if(td.dataset.c)this.penTo(td);
+  }
+  gridKey(e){
+    if(e.target.matches("input[type=text]"))return; // the cell editor handles its own keys
+    const td=e.target.closest("td[data-k]"); if(!td)return;
+    const k=e.key, mod=e.metaKey||e.ctrlKey, i=+td.parentElement.dataset.i;
+    if(k==="F2"||(k==="Enter"&&!e.target.closest("a,button,input"))){if(td.dataset.c){e.preventDefault();this.editCell(i,td.dataset.c,td);} return;}
+    if(mod&&k.toLowerCase()==="c"&&td.dataset.c&&!String(getSelection()||"")){
+      e.preventDefault(); const v=this.cell(i,td.dataset.c); if(navigator.clipboard)navigator.clipboard.writeText(v==null?"":String(v)).then(()=>toast("Copied"),()=>toast("Copy blocked by the browser")); return;}
+    const rows=[...this._tbody.rows].filter(r=>r.dataset.i!=null); let r=rows.indexOf(td.parentElement), c=td.cellIndex;
+    switch(k){
+      case "ArrowDown":r++;break; case "ArrowUp":r--;break; case "ArrowRight":c++;break; case "ArrowLeft":c--;break;
+      case "PageDown":r+=10;break; case "PageUp":r-=10;break;
+      case "Home":c=0; if(mod)r=0; break; case "End":c=Infinity; if(mod)r=Infinity; break;
+      default:return;
+    }
+    e.preventDefault();
+    const row=rows[Math.max(0,Math.min(rows.length-1,r))]; const t=row.cells[Math.max(0,Math.min(row.cells.length-1,c))];
+    this.cur={i:+row.dataset.i,k:t.dataset.k}; this.focusCur(true);
+  }
+  penTo(td){ // move the one floating edit button into this cell
+    if(td.querySelector("input"))return;
+    let b=this._pen;
+    if(!b){
+      b=this._pen=document.createElement("button"); b.type="button"; b.className="cedit"; b.tabIndex=-1; b.title="Edit · F2"; b.setAttribute("aria-keyshortcuts","F2");
+      b.innerHTML='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 2.5l3 3-8 8h-3v-3z"/><path d="M9 4l3 3"/></svg>';
+      b.onclick=(e)=>{e.preventDefault(); e.stopPropagation(); const cell=b.closest("td[data-c]"); if(cell)this.editCell(+cell.parentElement.dataset.i,cell.dataset.c,cell);};
+    }
+    b.setAttribute("aria-label","Edit "+td.dataset.c);
+    if(b.parentElement!==td)td.appendChild(b);
   }
   renderHead(){
     const vcols=this.cols.filter(c=>this.vis.has(c)); this._vcols=vcols;
@@ -1358,33 +1437,35 @@ class Grid{
     thead.appendChild(ftr);
   }
   renderRows(){
+    const refocus=this.hasFocus();
     const vcols=this._vcols||this.cols.filter(c=>this.vis.has(c));
     const idx=this.view(); const tb=this._tbody; tb.textContent="";
     if(this._count){const n=idx.length,all=this.rows.length;this._count.innerHTML=`<b>${n.toLocaleString()}</b>${n!==all?` of ${all.toLocaleString()}`:""} row${all===1?"":"s"}${n>1000?` · first 1,000 shown`:""}${this.sel.size?` · <b>${this.sel.size.toLocaleString()}</b> selected`:""}${this.edits.size?` · <b>${this.edits.size}</b> edited`:""}`;}
     const frag=document.createDocumentFragment();
     idx.slice(0,1000).forEach((i)=>{
       const r=this.rows[i]; const tr=document.createElement("tr"); tr.setAttribute("aria-selected",this.sel.has(i)?"true":"false"); tr.dataset.i=i;
-      const ck=document.createElement("td");ck.className="ckcol";const cb=document.createElement("input");cb.type="checkbox";cb.className="ck";cb.checked=this.sel.has(i);cb.setAttribute("aria-label","Select row "+(i+1));
+      const ck=document.createElement("td");ck.className="ckcol";ck.dataset.k="__ck";ck.tabIndex=-1;const cb=document.createElement("input");cb.type="checkbox";cb.className="ck";cb.tabIndex=-1;cb.checked=this.sel.has(i);cb.setAttribute("aria-label","Select row "+(i+1));
       cb.onclick=(e)=>{if(e.shiftKey&&this.lastAnchor!=null){const va=this.view();const a=va.indexOf(this.lastAnchor),b=va.indexOf(i);if(a>-1&&b>-1){const[lo,hi]=[Math.min(a,b),Math.max(a,b)];for(let k=lo;k<=hi;k++)this.sel.add(va[k]);}}else{if(cb.checked)this.sel.add(i);else this.sel.delete(i);} this.lastAnchor=i; this.render();};
       ck.appendChild(cb);tr.appendChild(ck);
-      const ix=document.createElement("td");ix.className="idx";ix.textContent=i+1;tr.appendChild(ix);
+      const ix=document.createElement("td");ix.className="idx";ix.dataset.k="__ix";ix.tabIndex=-1;ix.textContent=i+1;tr.appendChild(ix);
       for(const c of vcols){
-        const td=document.createElement("td");td.dataset.l=c;td.dataset.c=c;const k=i+"|"+c;const edited=this.edits.has(k);const val=edited?this.edits.get(k):r[c];
+        const td=document.createElement("td");td.dataset.l=c;td.dataset.c=c;td.dataset.k=c;td.tabIndex=-1;const k=i+"|"+c;const edited=this.edits.has(k);const val=edited?this.edits.get(k):r[c];
         if(edited)td.classList.add("dirty"); if(c===vcols[0])td.classList.add("lead");
         const t=this.meta(c).type; if(t==="number")td.classList.add("num");
         const url=linkify(c,val,r,r.__crm);
-        if(url){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener";a.textContent=String(val).replace(/^https?:\/\//,"").replace(/^mailto:/,"");a.title=url;td.appendChild(a);}
+        if(url){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener";a.tabIndex=-1;a.textContent=String(val).replace(/^https?:\/\//,"").replace(/^mailto:/,"");a.title=url;td.appendChild(a);}
         else{td.textContent=val==null?"":String(val);}
         td.title=td.title||String(val==null?"":val);
-        td.ondblclick=()=>this.editCell(i,c,td);
         tr.appendChild(td);
       }
-      const tv=document.createElement("td");tv.className="vcol";const vb=document.createElement("button");vb.className="viewbtn";vb.textContent="{ }";vb.setAttribute("aria-label","View raw record "+(i+1));vb.onclick=()=>showJson(r.__raw);tv.appendChild(vb);tr.appendChild(tv);
+      const tv=document.createElement("td");tv.className="vcol";tv.dataset.k="__raw";tv.tabIndex=-1;const vb=document.createElement("button");vb.className="viewbtn";vb.tabIndex=-1;vb.textContent="{ }";vb.setAttribute("aria-label","View raw record "+(i+1));vb.onclick=()=>showJson(r.__raw);tv.appendChild(vb);tr.appendChild(tv);
       frag.appendChild(tr);
     });
     tb.appendChild(frag);
     if(!idx.length){const tr=document.createElement("tr");tr.className="norows";tr.innerHTML=`<td colspan="${vcols.length+3}">No rows match. <button type="button" class="linkish">Clear filters</button></td>`;tr.querySelector("button").onclick=()=>{this.rules=[];this.q="";const gs=this.panel.querySelector("#_gs");if(gs)gs.value="";this.refresh();};tb.appendChild(tr);}
     const ckall=this._thead.querySelector("#_ckall"); if(ckall){ckall.checked=idx.length>0&&idx.every(i=>this.sel.has(i)); ckall.onclick=()=>{if(ckall.checked)for(const i of idx)this.sel.add(i);else for(const i of idx)this.sel.delete(i);this.render();};}
+    const home=this.homeCell(); if(home)this.setTab(home); // keep exactly one tab stop in the body
+    if(refocus)this.focusCur(false);
   }
   renderChips(){
     this.persist(); this.renderViewLabel();
@@ -1486,8 +1567,11 @@ class Grid{
     const td=e.target.closest("td[data-c]"); if(!td||td.querySelector("input"))return;
     e.preventDefault();
     const c=td.dataset.c, i=+td.closest("tr").dataset.i, raw=this.cell(i,c), m=this.meta(c), empty=isBlank(raw), s=empty?"":String(raw).trim(), sh=clip(s,24);
-    openPop({x:e.clientX,y:e.clientY},(el)=>{
+    // the context-menu key / Shift+F10 reports a point outside the cell: anchor the menu to the cell then
+    const b=td.getBoundingClientRect(), inside=e.clientX>=b.left&&e.clientX<=b.right&&e.clientY>=b.top&&e.clientY<=b.bottom;
+    openPop(inside?{x:e.clientX,y:e.clientY}:td,(el)=>{
       el.setAttribute("role","menu"); popHead(el,c);
+      popItem(el,"Edit value",()=>this.editCell(i,c),{hint:"F2"}); popSep(el);
       if(empty){
         popItem(el,`Only rows where ${c} is empty`,()=>this.quick(c,"empty"));
         popItem(el,`Exclude empty ${c}`,()=>this.quick(c,"nempty"));
@@ -1499,7 +1583,7 @@ class Grid{
         else {popItem(el,`${c} is “${sh}”`,()=>this.quick(c,"eq",{v:s})); popItem(el,`${c} is not “${sh}”`,()=>this.quick(c,"neq",{v:s}));}
         popSep(el);
         popItem(el,`Only empty ${c}`,()=>this.quick(c,"empty"));
-        popItem(el,"Copy value",()=>{navigator.clipboard&&navigator.clipboard.writeText(s).then(()=>toast("Copied"));});
+        popItem(el,"Copy value",()=>{navigator.clipboard&&navigator.clipboard.writeText(s).then(()=>toast("Copied"));},{hint:/Mac|iP/.test(navigator.platform)?"⌘C":"Ctrl+C"});
       }
     });
   }
@@ -1541,12 +1625,16 @@ class Grid{
     openPop(btn,build,"pop-views");
   }
   editCell(i,c,td){
+    td=td&&td.isConnected?td:this.cellEl(i,c); if(!td||td.querySelector("input"))return;
+    this.cur={i,k:c};
     const cur=this.edits.has(i+"|"+c)?this.edits.get(i+"|"+c):this.rows[i][c];
-    const inp=document.createElement("input");inp.type="text";inp.value=cur==null?"":String(cur);inp.style.width="100%";
+    const inp=document.createElement("input");inp.type="text";inp.value=cur==null?"":String(cur);inp.style.width="100%";inp.setAttribute("aria-label","Edit "+c);
     td.textContent="";td.appendChild(inp);inp.focus();inp.select();
     let done=false;
-    const commit=()=>{if(done)return;done=true;const nv=inp.value; if(String(nv)!==String(this.rows[i][c]??"")){this.edits.set(i+"|"+c,nv);}else{this.edits.delete(i+"|"+c);} this.renderRows(); if(this.onEdit)this.onEdit();};
-    inp.onblur=commit; inp.onkeydown=(e)=>{if(e.key==="Enter")commit(); if(e.key==="Escape"){done=true;this.renderRows();}};
+    // Enter / Escape hand focus back to the cell; a blur (clicking elsewhere) commits and leaves focus where it went
+    const commit=(back)=>{if(done)return;done=true;const nv=inp.value; if(String(nv)!==String(this.rows[i][c]??"")){this.edits.set(i+"|"+c,nv);}else{this.edits.delete(i+"|"+c);} this.renderRows(); if(back)this.focusCur(false); if(this.onEdit)this.onEdit();};
+    inp.onblur=()=>commit(false);
+    inp.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();commit(true);} else if(e.key==="Escape"){e.preventDefault();done=true;this.renderRows();this.focusCur(false);}};
   }
   colMenu(anchor){
     document.querySelectorAll(".colmenu").forEach(m=>m.remove());
