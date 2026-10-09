@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// PLANS_TPL_VERSION: 30
+// PLANS_TPL_VERSION: 32
 // Plan-page toolchain for docs/plans/ — browse, create, and index interactive
 // HTML plan pages. Runs on `bun` (preferred, faster) or `node`.
 //
@@ -9,6 +9,8 @@
 //   bun run plans new <slug> [--title "T"] [--source "who/what"]
 //                                 # stamp a new interactive plan page (auto-numbered,
 //                                 # repo accent color, provenance line)
+//   bun run plans publish <slug> [--seq N] [--notify]
+//                                 # v31: copy the plan to the cresa.one Site, verify its card
 //   bun run plans app <slug> [--title "T"] [--badge "TAG"] [--dest dir] [--recipe name]
 //                                 # stamp a single-file skeleton APP. Delegates to appkit
 //                                 # (~/.claude/templates/appkit) — the canonical parts +
@@ -81,6 +83,13 @@
 // line instead of metric tiles, no colored side borders, thumb-reach action bar
 // on phones, clearer status/submit copy, themed browser surfaces, an authored
 // send moment, and an axe-clean paper theme. Visual evidence in provenance/.
+// v32 (docs, 2026-10-06): DESIGN.md says to start background waits as
+// `bun scripts/plans.mjs wait`, because token-saver ends `bun run …` tasks at 300 s.
+// v31 (publish, 2026-10-06): `plans wait` copies the plan to a cresa.one Site
+// (hub.config.json `publish`), verifies the link card, and texts the Site link;
+// a failed publish exits 3 and texts nothing. Submit on the Site copy reaches
+// the hub through the Site's /_hub proxy route. Summaries no longer print the
+// plan number twice ("#003 #003"). See the "publish to a cresa.one Site" section.
 // v19 (remote + notify): the hub answers any non-.localhost Host with
 // path-prefixed routing (/<appName>/plans/<file>.html) behind a shared key, and
 // rewrites each served page's ENDPOINT line to its own prefix, so a page opened
@@ -650,6 +659,7 @@ async function cmdHub(argv) {
   }
   if (sub === 'remote') return hubRemote(argv.slice(1));
   if (sub === 'notify') return hubNotify(argv.slice(1));
+  if (sub === 'publish') return hubPublish(argv.slice(1));
   if (sub === 'status' || !sub) {
     const cfg = await ensureConfig();
     const h = await hubHealth();
@@ -664,9 +674,11 @@ async function cmdHub(argv) {
     console.log(`remote:   ${info.enabled ? `${info.provider} · ${info.baseUrl ? `${info.baseUrl}/` : '(url unknown)'}${info.reason ? ` · ${info.reason}` : ' · live'}` : 'off — bun run plans hub remote on [--provider tailscale|funnel|ngrok|cloudflare]'}`);
     const n = await notifyConfig();
     console.log(`notify:   ${n.channel && n.channel !== 'off' ? `${n.channel}${n.to ? ` -> ${n.to}` : ''}${n.command ? ` (${n.command})` : ''}` : 'off — bun run plans hub notify set --channel imessage --to <your iMessage handle>'}`);
+    const pub = await publishConfig();
+    console.log(`publish:  ${pub ? `${pub.provider} · ${pub.baseUrl}/ · access ${pub.access} (bun run plans hub publish status)` : 'off — bun run plans hub publish set --site <slug> --allow <your email>'}`);
     return;
   }
-  console.error('Usage: plans hub register [--quiet] | status | install | uninstall | start | stop | logs | url [--remote] | run | remote … | notify …');
+  console.error('Usage: plans hub register [--quiet] | status | install | uninstall | start | stop | logs | url [--remote] | run | remote … | notify … | publish …');
   process.exit(1);
 }
 
@@ -1075,24 +1087,37 @@ async function waitingMarkers() {
   }
   return out.sort((a, b) => Date.parse(b.startedAt || 0) - Date.parse(a.startedAt || 0));
 }
-function shortTitle(t) { return String(t || '').replace(/\s+/g, ' ').trim().slice(0, 80); }
+// Stamped pages title themselves "#003 Title". Strip that prefix wherever the
+// number is printed separately, or the text reads "#003 #003 Title".
+function bareTitle(t) { return String(t || '').replace(/^\s*#\d+\s+/, ''); }
+function shortTitle(t) { return bareTitle(t).replace(/\s+/g, ' ').trim().slice(0, 80); }
 // { text, links } — the text is one message; each link is sent as its own
-// message so it unfurls into the hub's per-page Open Graph card.
-async function waitingMessage(items, { test = false } = {}) {
+// message so it unfurls into that page's Open Graph card. With a publish Site
+// configured (v31), a plan already copied there is linked on the Site instead
+// of the hub; a public Site has no submit route, so the hub link follows it.
+async function waitingMessage(items, { test = false, published = {} } = {}) {
   const info = await remoteInfo();
+  const pub = await publishConfig();
   const link = (p) => info.live ? remoteLink(info, p) : null;
   const lines = [];
   const links = [];
+  const count = (it) => published[planKey(it.slug, it.seq)]?.decisions;
+  const about = (it) => `(${it.app}${count(it) ? ` · ${count(it)} decision${count(it) === 1 ? '' : 's'}` : ''})`;
   if (test) lines.push('Plans hub test — this is how Claude will reach you.');
-  else if (items.length === 1) lines.push(`Claude is waiting on #${String(items[0].seq).padStart(3, '0')} ${shortTitle(items[0].title)} (${items[0].app}).`);
-  else if (items.length > 1) lines.push(`Claude is waiting on ${items.length} plans: ${items.map(i => `#${String(i.seq).padStart(3, '0')} ${shortTitle(i.title)} (${i.app})`).join('; ')}.`);
+  else if (items.length === 1) lines.push(`Claude is waiting on #${String(items[0].seq).padStart(3, '0')} ${shortTitle(items[0].title)} ${about(items[0])}.`);
+  else if (items.length > 1) lines.push(`Claude is waiting on ${items.length} plans: ${items.map(i => `#${String(i.seq).padStart(3, '0')} ${shortTitle(i.title)} ${about(i)}`).join('; ')}.`);
   else lines.push('No plan is waiting on you right now.');
   for (const it of items.slice(0, 5)) {
     const p = `/${it.app}/plans/${path.basename(it.file)}`;
-    links.push({ label: `#${String(it.seq).padStart(3, '0')} ${shortTitle(it.title)}`, url: link(p) || `https://${it.app}.localhost/plans/${path.basename(it.file)}` });
+    const label = `#${String(it.seq).padStart(3, '0')} ${shortTitle(it.title)}`;
+    const site = published[planKey(it.slug, it.seq)]?.url || (pub && existsSync(mirrorPagePath(pub, it.app, it.seq, it.slug)) ? publishedUrl(pub, it.app, it.seq, it.slug) : null);
+    if (site) {
+      links.push({ label, url: site });
+      if (!publishProtected(pub)) links.push({ label: `${label} (submit)`, url: link(p) });
+    } else links.push({ label, url: link(p) || `https://${it.app}.localhost/plans/${path.basename(it.file)}` });
   }
-  if (items.length !== 1 || test) links.push({ label: 'All plans', url: link('/') || null });
-  if (!info.live) lines.push(info.enabled ? `Remote is not reachable right now: ${info.reason}.` : 'Remote access is off — links work on the LAN only.');
+  if (items.length !== 1 || test) links.push({ label: 'All plans', url: (pub && items.length ? `${pub.baseUrl}/` : null) || link('/') || null });
+  if (!info.live) lines.push(pub ? `Submit cannot reach Claude right now (${info.enabled ? info.reason : 'hub remote access is off'}); it saves a file instead.` : info.enabled ? `Remote is not reachable right now: ${info.reason}.` : 'Remote access is off — links work on the LAN only.');
   return { text: lines.join('\n'), links: links.filter(l => l.url) };
 }
 async function hubNotify(argv) {
@@ -1149,7 +1174,11 @@ async function warmPreviewCards(links) {
     try { const r = await fetch(url, { signal: AbortSignal.timeout(45000) }); await r.arrayBuffer(); } catch {}
   }
 }
-async function announceWaiting(cfg, plan, { started, notify }) {
+// v31: with a publish Site configured, the plan is copied there BEFORE the
+// text goes out and the text carries the Site link. A failed publish throws:
+// `plans wait` then exits 3 without texting, so a half-done announcement
+// (hub link only, no Site copy) never reaches the phone.
+async function announceWaiting(cfg, plan, { started, notify, publish = true }) {
   const key = `${plan.slug}-${String(plan.seq).padStart(3, '0')}`;
   const dir = path.join(HUB_WAITING_DIR, cfg.appName);
   const marker = path.join(dir, `${key}.json`);
@@ -1157,10 +1186,19 @@ async function announceWaiting(cfg, plan, { started, notify }) {
   const prev = await readJsonOr(marker, null);
   const entry = { app: cfg.appName, slug: plan.slug, seq: plan.seq, title: plan.title, file: plan.file, startedAt: new Date(started).toISOString(), pid: process.pid, notifiedAt: prev?.notifiedAt || null };
   await writeJsonAtomic(marker, entry);
+  const published = {};
+  const pub = publish ? await publishConfig() : null;
+  if (pub) {
+    try { published[key] = await publishPlan(cfg, entry, pub); }
+    catch (err) { await fs.rm(marker, { force: true }); throw Object.assign(err, { publishFailed: true }); }
+    entry.publishedUrl = published[key].url;
+    await writeJsonAtomic(marker, entry);
+    console.error(`[plans wait] published ${published[key].url}`);
+  }
   const recently = entry.notifiedAt && (Date.now() - Date.parse(entry.notifiedAt)) < NOTIFY_DEDUPE_MS;
   if (notify && !recently) {
     const n = await notifyConfig();
-    const message = await waitingMessage([entry]);
+    const message = await waitingMessage([entry], { published });
     const preview = await previewFor(n, entry);
     await warmPreviewCards(message.links);
     const r = sendNotification(n, message.text, { file: preview, links: message.links });
@@ -1168,6 +1206,421 @@ async function announceWaiting(cfg, plan, { started, notify }) {
     else console.error(`[plans wait] no text sent — ${r.reason}`);
   }
   return marker;
+}
+
+
+/* ---------------- publish to a cresa.one Site (v31) ---------------- */
+// `plans publish <slug>` copies a plan page to the cresa.one Site named in
+// hub.config.json `publish`, then checks the link card a phone will show.
+// `plans wait` runs it before texting, so the text links the Site page
+// (https://<site>.cresa.one/<app>/<NNN>-<slug>.html) instead of the hub tunnel.
+//
+// - One local mirror directory holds the whole Site, because a cresa.one
+//   publish replaces every file. Pages from all repos live there side by side.
+// - cresa.one does not serve a folder's index.html (`/x/` redirects to `/x`,
+//   which is a 404), so each page is a flat `<NNN>-<slug>.html` file and its
+//   card is `<NNN>-<slug>/og.png`.
+// - A protected Site (access "restricted") hides every file from link
+//   previewers and shows only the Site viewer title, description, and image.
+//   Each publish therefore points the viewer metadata at the plan being sent.
+// - Submit on the Site copy posts to PROXY_PREFIX on the same origin. cresa.one
+//   checks the viewer, then forwards the request to the hub tunnel with
+//   `Authorization: Bearer <remote.proxyToken>`. Proxy routes exist only on
+//   protected Sites, so a public Site cannot submit and the text adds the hub link.
+const PUBLISH_DEFAULTS = {
+  provider: 'cresa-one',
+  access: 'restricted',
+  siteTitle: 'Claude Plans',
+  tags: ['claude-code', 'decisions', 'plans'],
+  mirror: path.join(HUB_DIR, 'cresa-one-site'),
+  script: path.join(os.homedir(), '.claude', 'skills', 'cresa-one', 'scripts', 'publish.sh'),
+  ogScript: path.join(os.homedir(), '.claude', 'skills', 'cresa-one', 'scripts', 'og-image.py'),
+};
+const PROXY_PREFIX = '/_hub';
+const PROXY_VARIABLE = 'PLANS_HUB_SUBMIT_TOKEN';
+const PREVIEW_UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php) Twitterbot/1.0';
+const CRESA_API = process.env.__PLANS_CRESA_API || 'https://cresa.one/api/v1';
+const PAGE_RE = /^(\d{3})-([a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?)\.html$/;
+
+async function publishConfig() {
+  const p = (await hubConfig()).publish;
+  if (!p || typeof p !== 'object' || !p.site) return null;
+  return { ...PUBLISH_DEFAULTS, ...p, baseUrl: String(p.baseUrl || `https://${p.site}.cresa.one`).replace(/\/+$/, '') };
+}
+function publishProtected(pub) { return !!pub && pub.access !== 'anyone_with_link'; }
+function pageStem(seq, slug) { return `${String(seq).padStart(3, '0')}-${slug}`; }
+function mirrorPagePath(pub, app, seq, slug) { return path.join(pub.mirror, app, `${pageStem(seq, slug)}.html`); }
+function publishedUrl(pub, app, seq, slug) { return `${pub.baseUrl}/${app}/${pageStem(seq, slug)}.html`; }
+
+// Facts the card and the text need, read from the stamped page source.
+function planFacts(source) {
+  const metaField = (k) => {
+    const m = source.match(new RegExp(`^\\s*${k}:\\s*("(?:[^"\\\\]|\\\\.)*")`, 'm'));
+    try { return m ? JSON.parse(m[1]) : null; } catch { return null; }
+  };
+  const block = source.match(/^var PLAN_ITEMS = \[([\s\S]*?)^\];/m)?.[1] || '';
+  return { date: metaField('date'), decisions: (block.match(/^\s*\{\s*id\s*:/gm) || []).length };
+}
+
+function publishTags({ title, description, url, image, siteName }) {
+  const e = escapeHtml;
+  return [
+    `<meta name="description" content="${e(description)}">`,
+    `<link rel="canonical" href="${e(url)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="${e(siteName)}">`,
+    `<meta property="og:title" content="${e(title)}">`,
+    `<meta property="og:description" content="${e(description)}">`,
+    `<meta property="og:url" content="${e(url)}">`,
+    ...(image ? [
+      `<meta property="og:image" content="${e(image)}">`,
+      `<meta property="og:image:width" content="1200">`,
+      `<meta property="og:image:height" content="630">`,
+      `<meta property="og:image:alt" content="${e(title)}">`,
+      `<meta name="twitter:card" content="summary_large_image">`,
+      `<meta name="twitter:image" content="${e(image)}">`,
+    ] : [`<meta name="twitter:card" content="summary">`]),
+    `<meta name="twitter:title" content="${e(title)}">`,
+    `<meta name="twitter:description" content="${e(description)}">`,
+  ].join('\n');
+}
+
+// The Site copy of a plan page: earlier share tags removed, fresh ones after
+// </title>, and ENDPOINT pinned to the Site proxy route. The template derives
+// ENDPOINT from a /plans/ path, which the flat Site path does not have.
+function mirrorPage(source, { tags, endpoint }) {
+  let out = source
+    .replace(/^[ \t]*<meta\s+(?:property|name)="(?:og:[^"]*|twitter:[^"]*|description)"[^>]*>[ \t]*\r?\n?/gim, '')
+    .replace(/^[ \t]*<link\s+rel="canonical"[^>]*>[ \t]*\r?\n?/gim, '');
+  out = out.replace(/<\/title>/i, (m) => `${m}\n${tags}`);
+  const pin = `ENDPOINT = ${JSON.stringify(endpoint)}; // plans publish: Site proxy route to the plans hub`;
+  const derive = /^if \(\/\^https\?:\$\/\.test\(location\.protocol\)\) ENDPOINT = [^\n]*$/m;
+  if (derive.test(out)) out = out.replace(derive, (m) => `${m}\n${pin}`);
+  else out = out.replace(/^var ENDPOINT = [^\n]*$/m, (m) => `${m}\n${pin}`);
+  return out;
+}
+
+// The hub renders the same card it serves on the tunnel. Ask the local hub
+// for the page (that renders the card), then copy the PNG. Without the hub,
+// fall back to the cresa-one skill's og-image.py.
+async function planCard(pub, app, file, { title, sub, label }) {
+  const name = path.basename(file);
+  const png = path.join(HUB_DIR, 'og', app, `${name}.png`);
+  const secret = (await hubConfig()).remote?.secret;
+  if (secret) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${await hubPort()}/${app}/plans/${encodeURIComponent(name)}?key=${encodeURIComponent(secret)}`, { signal: AbortSignal.timeout(45000) });
+      await r.arrayBuffer();
+      if (r.ok && existsSync(png) && statSync(png).mtimeMs >= statSync(file).mtimeMs) return png;
+    } catch {}
+  }
+  return ogScriptCard(pub, { title, sub, label, footer: new URL(pub.baseUrl).host });
+}
+async function ogScriptCard(pub, { title, sub, label, footer }) {
+  if (!existsSync(pub.ogScript)) return null;
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'plans-og-'));
+  const args = [pub.ogScript, '--title', title, '--subtitle', sub, '--label', label, '--footer', footer, '--layout', 'editorial-right', '--out', out];
+  const r = have('uv') ? spawnSync('uv', ['run', '--quiet', ...args], { encoding: 'utf8', timeout: 120000 }) : spawnSync(pub.ogScript, args.slice(1), { encoding: 'utf8', timeout: 120000 });
+  if (r.status !== 0) return null;
+  const png = (await fs.readdir(out)).find(f => f.endsWith('.png') && !f.endsWith('_thumb.png'));
+  return png ? path.join(out, png) : null;
+}
+
+function planStatus(app, slug, seq) {
+  const key = `${planKey(slug, seq)}.json`;
+  if (existsSync(path.join(HUB_DONE_DIR, app, key))) return 'implemented';
+  if (existsSync(path.join(HUB_INBOX_DIR, app, key))) return 'submitted';
+  const marker = path.join(HUB_WAITING_DIR, app, key);
+  try { const m = JSON.parse(readFileSync(marker, 'utf8')); if (!m.pid || processIsAlive(m.pid)) return 'waiting'; } catch {}
+  return 'idle';
+}
+
+// Site landing page: every mirrored plan, waiting first, grouped by repo.
+async function writeMirrorIndex(pub) {
+  const rows = [];
+  let appsDirs = [];
+  try { appsDirs = (await fs.readdir(pub.mirror, { withFileTypes: true })).filter(d => d.isDirectory() && !d.name.startsWith('.')).map(d => d.name); } catch {}
+  for (const app of appsDirs) {
+    for (const name of await fs.readdir(path.join(pub.mirror, app))) {
+      const m = name.match(PAGE_RE);
+      if (!m) continue;
+      const head = (await fs.readFile(path.join(pub.mirror, app, name), 'utf8')).slice(0, 6000);
+      const title = decodeHtmlText(head.match(/<title>([^<]+)<\/title>/i)?.[1] || name);
+      const facts = planFacts(await fs.readFile(path.join(pub.mirror, app, name), 'utf8'));
+      rows.push({ app, name, seq: Number(m[1]), slug: m[2], title: bareTitle(title), date: facts.date || '', decisions: facts.decisions, status: planStatus(app, m[2], Number(m[1])) });
+    }
+  }
+  const rank = { waiting: 0, submitted: 1, idle: 2, implemented: 3 };
+  rows.sort((a, b) => rank[a.status] - rank[b.status] || b.date.localeCompare(a.date) || b.seq - a.seq);
+  const label = { waiting: 'Waiting', submitted: 'Submitted', implemented: 'Done', idle: '' };
+  const byApp = new Map();
+  for (const r of rows) { if (!byApp.has(r.app)) byApp.set(r.app, []); byApp.get(r.app).push(r); }
+  const e = escapeHtml;
+  const waiting = rows.filter(r => r.status === 'waiting').length;
+  const description = waiting ? `${waiting} plan${waiting === 1 ? '' : 's'} waiting for your decisions.` : 'Decision pages from every repo, ready to review.';
+  const sections = [...byApp].map(([app, list]) => `  <h2>${e(app)}</h2>\n  <ul>\n${list.map(r => `    <li><a class="row" href="/${e(app)}/${e(r.name)}">
+      <span class="seq">#${String(r.seq).padStart(3, '0')}</span>
+      <span class="t"><b>${e(r.title)}</b><span>${e([r.date, r.decisions ? `${r.decisions} decision${r.decisions === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '))}</span></span>
+      <span class="st st-${r.status}">${label[r.status]}</span>
+    </a></li>`).join('\n')}\n  </ul>`).join('\n');
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${e(pub.siteTitle)}</title>
+${publishTags({ title: pub.siteTitle, description, url: `${pub.baseUrl}/`, image: existsSync(path.join(pub.mirror, 'og.png')) ? `${pub.baseUrl}/og.png` : null, siteName: pub.siteTitle })}
+<style>
+:root{--bg:#000;--surface:#0d0d0f;--line:#26262b;--ink:#f5f5f5;--muted:#a3a3ab;--accent:oklch(0.78 0.16 245);--warn:oklch(0.83 0.16 75);--ok:oklch(0.78 0.15 150);
+  --font-ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--font-mono:ui-monospace,"SF Mono",Menlo,monospace}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#fafaf7;--surface:#fff;--line:#e4e4de;--ink:#141414;--muted:#55555c;--accent:oklch(0.5 0.16 245);--warn:oklch(0.55 0.14 75);--ok:oklch(0.5 0.14 150)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 1rem/1.5 var(--font-ui)}
+main{max-width:760px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:1.75rem;letter-spacing:-.02em;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 24px}
+h2{font:600 .75rem/1 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:24px 0 8px}
+ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+a.row{display:flex;gap:12px;align-items:center;min-height:56px;padding:12px 16px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:inherit;text-decoration:none}
+a.row:hover,a.row:focus-visible{border-color:var(--accent);outline:none}
+.seq{font:600 .8125rem var(--font-mono);background:var(--accent);color:#000;border-radius:999px;padding:2px 10px;flex:none}
+.t{flex:1;min-width:0}
+.t b{display:block;font-weight:600}
+.t span{color:var(--muted);font:400 .8125rem var(--font-mono)}
+.st{font:600 .75rem var(--font-mono);flex:none;color:var(--muted)}
+.st-waiting{color:var(--warn)}
+.st-implemented{color:var(--ok)}
+</style>
+</head>
+<body>
+<main>
+  <h1>${e(pub.siteTitle)}</h1>
+  <p class="sub">Decision pages from every repo. Open one, approve or reject each item, then submit.</p>
+${sections || '  <p class="sub">No plans published yet.</p>'}
+</main>
+</body>
+</html>
+`;
+  await fs.writeFile(path.join(pub.mirror, 'index.html'), html);
+  return { waiting, plans: rows.length };
+}
+
+function cresaKey() {
+  if (process.env.CRESAONE_API_KEY) return process.env.CRESAONE_API_KEY.trim();
+  try { return readFileSync(path.join(os.homedir(), '.cresaone', 'credentials'), 'utf8').split('\n')[0].trim() || null; } catch { return null; }
+}
+async function cresaApi(method, route, body) {
+  const key = cresaKey();
+  if (!key) throw new Error('no cresa.one API key (set CRESAONE_API_KEY or save ~/.cresaone/credentials)');
+  const r = await fetch(`${CRESA_API}${route}`, {
+    method, signal: AbortSignal.timeout(30000),
+    headers: { authorization: `Bearer ${key}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await r.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!r.ok) throw new Error(`cresa.one ${method} ${route} → HTTP ${r.status}${data?.error ? `: ${data.error.message || data.error}` : ''}`);
+  return data;
+}
+async function siteExists(pub) {
+  try { await cresaApi('GET', `/publish/${pub.site}`); return true; }
+  catch (err) { if (/HTTP 404/.test(err.message)) return false; throw err; }
+}
+
+// Make the Site match the config: access mode, public link cards, and (when
+// protected) the submit proxy route plus its Bearer variable. Idempotent: reads
+// first and writes only what differs. Needs the Site to exist.
+async function ensureSiteAccess(pub) {
+  const hub = await hubConfig();
+  const readAccess = async () => (await cresaApi('GET', `/publish/${pub.site}/access`))?.access || {};
+  let current = await readAccess();
+  if (!publishProtected(pub)) {
+    if (current.mode !== 'anyone_with_link') await cresaApi('PATCH', `/publish/${pub.site}/access`, { mode: 'anyone_with_link' });
+    return { mode: 'anyone_with_link', proxy: false };
+  }
+  if (pub.access !== 'restricted') throw new Error(`publish.access "${pub.access}" is not supported (use restricted or anyone_with_link)`);
+  const allowedEmails = [...new Set([...(current.allowedEmails || []), ...(pub.allowEmails || [])])].sort();
+  const allowedDomains = [...new Set([...(current.allowedDomains || []), ...(pub.allowDomains || [])])].sort();
+  if (!allowedEmails.length && !allowedDomains.length) throw new Error('restricted access needs at least one allowed email (bun run plans hub publish set --allow you@example.com)');
+  const sameList = (a = [], b = []) => JSON.stringify([...a].sort()) === JSON.stringify(b);
+  if (current.mode !== 'restricted' || !sameList(current.allowedEmails, allowedEmails) || !sameList(current.allowedDomains, allowedDomains)) {
+    await cresaApi('PATCH', `/publish/${pub.site}/access`, { mode: 'restricted', allowedEmails, allowedDomains });
+    current = await readAccess();
+  }
+  if (current.publicPreviewEnabled !== true) await cresaApi('PATCH', `/publish/${pub.site}/access`, { publicPreviewEnabled: true });
+  const upstream = hub.remote?.baseUrl ? new URL(hub.remote.baseUrl).origin : null;
+  if (!hub.remote?.enabled || !upstream || !hub.remote?.secret) return { mode: 'restricted', proxy: false, reason: 'hub remote access is off, so Submit has nowhere to go (bun run plans hub remote on)' };
+  if (!hub.remote.proxyToken) {
+    hub.remote.proxyToken = randomBytes(32).toString('base64url');
+    await writeHubConfig(hub);
+  }
+  const vars = (await cresaApi('GET', '/me/variables'))?.variables || [];
+  const v = vars.find(x => x.name === PROXY_VARIABLE);
+  // cresa.one never returns a variable's value, so the hub records a
+  // fingerprint of what it last wrote and rewrites when the token or origin moved.
+  const fingerprint = createHash('sha256').update(`${hub.remote.proxyToken}\n${upstream}`).digest('hex').slice(0, 16);
+  if (!v || v.upstreamOrigin !== upstream || hub.remote.proxyTokenSynced !== fingerprint) {
+    await cresaApi('PUT', `/me/variables/${PROXY_VARIABLE}`, { value: hub.remote.proxyToken, upstreamOrigin: upstream });
+    hub.remote.proxyTokenSynced = fingerprint;
+    await writeHubConfig(hub);
+  }
+  const routes = (await cresaApi('GET', `/publish/${pub.site}/proxy-routes`))?.proxyRoutes || [];
+  const route = routes.find(r => r.pathPrefix === PROXY_PREFIX);
+  if (route && (route.upstreamOrigin !== upstream || route.authVariableName !== PROXY_VARIABLE)) {
+    await cresaApi('DELETE', `/publish/${pub.site}/proxy-routes/${route.id}`);
+  }
+  if (!route || route.upstreamOrigin !== upstream || route.authVariableName !== PROXY_VARIABLE) {
+    await cresaApi('POST', `/publish/${pub.site}/proxy-routes`, { pathPrefix: PROXY_PREFIX, upstreamOrigin: upstream, authVariableName: PROXY_VARIABLE });
+  }
+  return { mode: 'restricted', proxy: true };
+}
+
+function runPublishScript(pub, viewer) {
+  if (!existsSync(pub.script)) throw new Error(`publish script not found: ${pub.script} (install the cresa-one skill)`);
+  const args = [pub.mirror, '--slug', pub.site, '--title', viewer.title, '--description', viewer.description,
+    '--og-image-path', viewer.ogImagePath, '--tags', JSON.stringify(pub.tags), '--client', 'claude'];
+  // A protected Site answers every file with its access gate, so byte-level
+  // verification would fail by design; verifyPreview checks the card instead.
+  if (publishProtected(pub)) args.push('--no-verify');
+  const r = spawnSync(pub.script, args, { encoding: 'utf8', timeout: 300000, cwd: pub.mirror });
+  if (r.status !== 0) throw new Error(`publish.sh exit ${r.status}: ${(r.stderr || r.stdout || '').trim().split('\n').slice(-3).join(' | ')}`);
+  return r.stdout;
+}
+
+// Fetch the link the way a link previewer does and prove the card is there:
+// og:title names this plan and og:image answers 200 image/*. Retries briefly
+// because the Site CDN can serve the previous version for a few seconds.
+async function verifyPreview(url, expectTitle) {
+  const metaContent = (body, prop) => {
+    const tag = body.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, 'i'))?.[0];
+    const content = tag?.match(/content=["']([^"']*)["']/i)?.[1];
+    return content ? decodeHtmlText(content) : '';
+  };
+  const want = bareTitle(expectTitle).slice(0, 40);
+  let reason = 'not checked';
+  for (let attempt = 0; attempt < 6; attempt++) {
+    if (attempt) await new Promise(res => setTimeout(res, 3000));
+    try {
+      const r = await fetch(url, { headers: { 'user-agent': PREVIEW_UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+      const body = await r.text();
+      const title = metaContent(body, 'og:title');
+      const image = metaContent(body, 'og:image');
+      if (!title) { reason = `${url} (HTTP ${r.status}) has no og:title`; continue; }
+      if (want && !title.includes(want)) { reason = `og:title is "${title}", expected "${want}…"`; continue; }
+      if (!image) { reason = `${url} has no og:image`; continue; }
+      const img = await fetch(new URL(image, url), { headers: { 'user-agent': PREVIEW_UA }, signal: AbortSignal.timeout(20000) });
+      await img.arrayBuffer();
+      if (!img.ok || !/^image\//.test(img.headers.get('content-type') || '')) { reason = `og:image ${image} answered HTTP ${img.status} ${img.headers.get('content-type') || ''}`; continue; }
+      return { ok: true, title, image };
+    } catch (err) { reason = err.message; }
+  }
+  return { ok: false, reason };
+}
+
+// Copy one plan to the Site, publish, and verify. Returns { url, decisions }.
+async function publishPlan(cfg, plan, pub) {
+  const source = await fs.readFile(plan.file, 'utf8');
+  const facts = planFacts(source);
+  const stem = pageStem(plan.seq, plan.slug);
+  const app = cfg.appName;
+  const url = publishedUrl(pub, app, plan.seq, plan.slug);
+  const title = bareTitle(plan.title);
+  const status = planStatus(app, plan.slug, plan.seq);
+  const sub = [`#${String(plan.seq).padStart(3, '0')}`, app, facts.date, facts.decisions ? `${facts.decisions} decision${facts.decisions === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
+  const description = `${sub}${status === 'waiting' ? ' waiting for you' : status === 'submitted' ? ' · submitted' : status === 'implemented' ? ' · done' : ''}`;
+  const dir = path.join(pub.mirror, app);
+  await fs.mkdir(path.join(dir, stem), { recursive: true });
+  const card = await planCard(pub, app, plan.file, { title, sub, label: `PLAN #${String(plan.seq).padStart(3, '0')}` });
+  const ogPath = `/${app}/${stem}/og.png`;
+  if (card) await fs.copyFile(card, path.join(dir, stem, 'og.png'));
+  const image = card || existsSync(path.join(dir, stem, 'og.png')) ? `${pub.baseUrl}${ogPath}` : null;
+  const tags = publishTags({ title, description, url, image, siteName: pub.siteTitle });
+  await fs.writeFile(path.join(dir, `${stem}.html`), mirrorPage(source, { tags, endpoint: `${PROXY_PREFIX}/${app}` }));
+  if (!existsSync(path.join(pub.mirror, 'og.png'))) {
+    const root = await ogScriptCard(pub, { title: pub.siteTitle, sub: 'Decision pages from every repo', label: 'PLANS', footer: new URL(pub.baseUrl).host });
+    if (root) await fs.copyFile(root, path.join(pub.mirror, 'og.png'));
+  }
+  await writeMirrorIndex(pub);
+  const exists = await siteExists(pub);
+  if (exists) await ensureSiteAccess(pub);
+  // Protected: link previewers only ever see the viewer metadata, so it names
+  // this plan. Public: each page carries its own tags; the viewer stays the Site.
+  const viewer = publishProtected(pub)
+    ? { title, description, ogImagePath: image ? ogPath : '/og.png' }
+    : { title: pub.siteTitle, description: `Latest: #${String(plan.seq).padStart(3, '0')} ${title} (${app})`, ogImagePath: '/og.png' };
+  runPublishScript(pub, viewer);
+  // A brand-new Site is created public; lock it down straight after.
+  const access = await ensureSiteAccess(pub);
+  if (process.env.__PLANS_PUBLISH_SKIP_VERIFY !== '1') {
+    const v = await verifyPreview(url, title);
+    if (!v.ok) throw new Error(`link card check failed for ${url}: ${v.reason}`);
+  }
+  return { url, decisions: facts.decisions, access };
+}
+
+async function cmdPublish(argv) {
+  const { flags, rest } = parseFlags(argv);
+  const resolved = await resolvePlan(rest[0], flags.seq);
+  if (!rest[0]) { console.error('Usage: plans publish <slug> [--seq N] [--notify]'); process.exit(1); }
+  if (!resolved?.plan) { console.error(`No plan page for slug "${rest[0]}" in ${PLANS_DIR}`); process.exit(1); }
+  const pub = await publishConfig();
+  if (!pub) { console.error('[plans publish] no Site configured — bun run plans hub publish set --site <slug> --allow <your email>'); process.exit(1); }
+  const cfg = await ensureConfig();
+  const entry = { app: cfg.appName, slug: resolved.slug, seq: resolved.seq, title: resolved.plan.title, file: resolved.plan.path };
+  let result;
+  try { result = await publishPlan(cfg, entry, pub); }
+  catch (err) { console.error(`[plans publish] failed — ${err.message}`); process.exit(3); }
+  if (result.access?.reason) console.error(`[plans publish] warning: ${result.access.reason}`);
+  console.log(result.url);
+  if ('notify' in flags) {
+    const message = await waitingMessage([entry], { published: { [planKey(entry.slug, entry.seq)]: result } });
+    const r = sendNotification(await notifyConfig(), message.text, { links: message.links });
+    if (r.sent) console.error('[plans publish] texted you the link');
+    else { console.error(`[plans publish] no text sent — ${r.reason}`); process.exit(1); }
+  }
+}
+
+async function hubPublish(argv) {
+  const { flags, rest } = parseFlags(argv);
+  const sub = rest[0] || 'status';
+  const cfg = await hubConfig();
+  if (sub === 'status') {
+    const pub = await publishConfig();
+    if (!pub) { console.log('publish: off — bun run plans hub publish set --site <slug> --allow <your email>'); return; }
+    console.log(`publish:  ${pub.provider} · site ${pub.site} · ${pub.baseUrl}/ · access ${pub.access}${pub.allowEmails?.length ? ` (${pub.allowEmails.join(', ')})` : ''}`);
+    console.log(`mirror:   ${pub.mirror}`);
+    try {
+      const a = (await cresaApi('GET', `/publish/${pub.site}/access`))?.access || {};
+      const routes = (await cresaApi('GET', `/publish/${pub.site}/proxy-routes`))?.proxyRoutes || [];
+      console.log(`live:     access ${a.mode}${a.publicPreviewEnabled ? ' · link cards public' : ''} · submit route ${routes.some(r => r.pathPrefix === PROXY_PREFIX) ? `${PROXY_PREFIX} → ${routes.find(r => r.pathPrefix === PROXY_PREFIX).upstreamOrigin}` : 'none'}`);
+    } catch (err) { console.log(`live:     ${err.message}`); }
+    return;
+  }
+  if (sub === 'set') {
+    const next = { ...(cfg.publish || {}) };
+    if (flags.site) next.site = flags.site;
+    if (!next.site) { console.error('publish set needs --site <cresa.one slug>'); process.exit(1); }
+    if ('base-url' in flags) next.baseUrl = flags['base-url'];
+    if ('mirror' in flags) next.mirror = path.resolve(flags.mirror);
+    if ('title' in flags) next.siteTitle = flags.title;
+    if ('access' in flags) {
+      if (!['restricted', 'anyone_with_link'].includes(flags.access)) { console.error('access must be restricted | anyone_with_link'); process.exit(1); }
+      next.access = flags.access;
+    }
+    if ('allow' in flags) next.allowEmails = [...new Set([...(next.allowEmails || []), ...flags.allow.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)])];
+    cfg.publish = next;
+    await writeHubConfig(cfg);
+    const pub = await publishConfig();
+    if (await siteExists(pub).catch(() => false)) {
+      const a = await ensureSiteAccess(pub);
+      console.log(`[plans hub publish] ${pub.baseUrl}/ · access ${a.mode}${a.proxy ? ` · submit route ${PROXY_PREFIX}` : ''}${a.reason ? ` · ${a.reason}` : ''}`);
+    } else console.log(`[plans hub publish] ${pub.baseUrl}/ · the Site is created on the first \`plans publish\``);
+    return;
+  }
+  if (sub === 'off') { delete cfg.publish; await writeHubConfig(cfg); console.log('[plans hub publish] off (the Site itself is untouched)'); return; }
+  console.error('Usage: plans hub publish [status | set --site <slug> [--allow you@example.com] [--access restricted|anyone_with_link] [--base-url URL] [--mirror dir] [--title "Site title"] | off]');
+  process.exit(1);
 }
 
 
@@ -1348,7 +1801,7 @@ async function cmdInbox(argv) {
 async function cmdWait(argv) {
   const { flags, rest } = parseFlags(argv);
   const slug = (rest[0] || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-  if (!slug) { console.error('Usage: plans wait <slug> [--seq N] [--timeout seconds] [--any] [--no-notify]'); process.exit(1); }
+  if (!slug) { console.error('Usage: plans wait <slug> [--seq N] [--timeout seconds] [--any] [--no-notify] [--no-publish]'); process.exit(1); }
   const cfg = await ensureConfig();
   const plans = (await listPlans()).filter(p => p.name.endsWith(`-${slug}.html`) && p.seq != null);
   let seq = Number(flags.seq);
@@ -1371,7 +1824,14 @@ async function cmdWait(argv) {
   if (await ready()) { console.log(target); return; }
   console.error(`[plans wait] ${cfg.appName} · ${slug} #${seq} — waiting for a submission at https://${cfg.appName}.localhost/plans/`);
   // v19: marker for the remote landing page + a text with the link.
-  const marker = await announceWaiting(cfg, { slug, seq, title: plan.title, file: plan.path }, { started, notify: !('no-notify' in flags) });
+  let marker;
+  try { marker = await announceWaiting(cfg, { slug, seq, title: plan.title, file: plan.path }, { started, notify: !('no-notify' in flags), publish: !('no-publish' in flags) }); }
+  catch (err) {
+    if (!err.publishFailed) throw err;
+    console.error(`[plans wait] publish failed, nothing texted — ${err.message}`);
+    console.error('[plans wait] fix the cause and run wait again (bun run plans hub publish status), or pass --no-publish to text the hub link only');
+    process.exit(3);
+  }
   const clear = () => { try { rmSync(marker, { force: true }); } catch {} };
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { clear(); process.exit(130); });
   await new Promise((resolve, reject) => {
@@ -1877,14 +2337,20 @@ Usage:
   bun run plans index [--quiet] # regenerate docs/plans/index.html dashboard
   bun run plans serve [--name x] <cmd…>
                                 # run a dev/app server through portless -> https://<appName>.localhost
-  bun run plans wait <slug> [--seq N] [--timeout S] [--any]
-                                # block until that plan's decisions land in the hub inbox; prints the path
+  bun run plans wait <slug> [--seq N] [--timeout S] [--any] [--no-notify] [--no-publish]
+                                # publish the plan (when a Site is set), text you its link, then block
+                                # until the decisions land in the hub inbox; prints the path.
+                                # Exit 3 = publish failed and nothing was texted.
+  bun run plans publish <slug> [--seq N] [--notify]
+                                # v31: copy the plan to the cresa.one Site, publish, verify the link card
   bun run plans hub [status|register|install|start|stop|logs|url [--remote]|run]
                                 # v17 always-on hub: https://<appName>.localhost/plans/ via portless
   bun run plans hub remote [status|on|off] [--provider tailscale|funnel|ngrok|cloudflare]
                                 # v19: reach every plan from your phone off-LAN (keyed link, then cookie)
   bun run plans hub notify [status|set --channel imessage|command|off --to <handle>|test]
                                 # v19: how 'plans wait' texts you (iMessage to yourself, or a command)
+  bun run plans hub publish [status|set --site <slug> --allow <email> [--access restricted|anyone_with_link]|off]
+                                # v31: the cresa.one Site that 'plans wait' publishes to before texting
   bun run plans notify [--test] # text the "waiting for you" link now
   bun run plans done <slug> [--items d01,d03] [--note "…"] [--commit sha]
                                 # record that the approved decisions were executed (→ "implemented")
@@ -1905,6 +2371,7 @@ async function main() {
   if (arg === 'index') return cmdIndex(process.argv.slice(3));
   if (arg === 'serve') return cmdServe(process.argv.slice(3));
   if (arg === 'wait') return cmdWait(process.argv.slice(3));
+  if (arg === 'publish') return cmdPublish(process.argv.slice(3));
   if (arg === 'hub') return cmdHub(process.argv.slice(3));
   if (arg === 'notify') return cmdNotify(process.argv.slice(3));
   if (arg === 'done') return cmdDone(process.argv.slice(3));

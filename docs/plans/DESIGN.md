@@ -24,6 +24,27 @@ writes `YYYY-MM-DD-NNN-<slug>.html`, and regenerates the dashboard. Then edit
 the file: fill the thesis paragraph (`#plan-sub`), replace the sample
 `PLAN_ITEMS`, and optionally add `.prose` context sections above the groups.
 
+### Done means published, checked, and texted (v31)
+
+A plan is not handed over until every step below has run. Do them in order:
+
+1. Stamp the page and fill it (above).
+2. Run `bun scripts/plans.mjs wait <slug>` in the background. Do not use
+   `bun run plans wait`: the token-saver hook wraps `bun run …` with a
+   300-second timeout, so the task ends with exit 124. The wait process itself
+   keeps running, and its exit never reaches you. With a publish Site set
+   (`bun run plans hub publish status`), it copies the page to the Site,
+   checks the link card, and texts the Site link. Do not text a link by hand.
+3. Check the `wait` output. You need both `[plans wait] published <url>` and
+   `[plans wait] texted you the link`. Exit code 3 means the publish failed
+   and nothing was texted: fix the cause and run `wait` again.
+4. Give the user the published URL in the chat too.
+5. When the submission arrives, execute the approved items, then record them
+   with `bun run plans done <slug>`.
+
+`bun run plans publish <slug> [--notify]` runs step 2's publish on its own,
+for example after you edit a page that is already waiting.
+
 ## Numbering & provenance
 
 - `plans.config.json` holds `nextSeq`; every stamped page gets a monotonically
@@ -145,6 +166,56 @@ file to Claude.
 `plans.config.json`) with `/ping` + `/submit`. For those, run the v16 loopback
 listener below (per-repo port, slug handshake, token). Never kill a listener
 that answers `/ping` — it is live, not stale.
+
+### Publishing to a cresa.one Site (v31)
+
+`hub.config.json` `publish` names one cresa.one Site for every repo. Set it once
+per machine:
+
+```bash
+bun run plans hub publish set --site plans --allow you@example.com   # access restricted (default)
+bun run plans hub publish status                                      # config + live access + submit route
+```
+
+`plans wait` (and `plans publish`) then does this for each plan:
+
+1. Copies the page to the mirror directory (`~/.claude/plans-hub/cresa-one-site/`
+   by default) as `<appName>/<NNN>-<slug>.html`. The copy gets its own Open Graph
+   and Twitter tags, and its `ENDPOINT` is pinned to `/_hub/<appName>`.
+2. Copies the hub's card for the page to `<appName>/<NNN>-<slug>/og.png`. If the
+   hub cannot render one, it uses the cresa-one skill's `og-image.py` instead.
+3. Rewrites the Site's `index.html` to list every mirrored plan, waiting plans first.
+4. Runs the cresa-one skill's `publish.sh` on the whole mirror. The Site viewer
+   title, description, and image are set to this plan.
+5. Sets the Site's access policy, public link cards, and submit route
+   (see Rules below). It reads first and writes only what differs.
+6. Fetches the URL as a link previewer would and checks two things. The
+   og:title must name this plan, and og:image must answer 200 `image/*`. If
+   either check fails, `wait` exits with code 3 and texts nothing.
+
+Rules that cost a session each to learn:
+
+- **Flat files only.** cresa.one does not serve a folder's `index.html`.
+  `/x/` redirects to `/x`, which answers 404. Pages must be `<NNN>-<slug>.html`.
+- **The mirror is the whole Site.** A publish replaces every file on the Site,
+  so the mirror holds pages from all repos. Never publish a single page
+  directory to the Site.
+- **A protected Site shows only its viewer metadata to link previewers.** Pages
+  stay behind the access gate. That is why each publish points the viewer
+  metadata at the plan being texted. An older link then shows the newest
+  plan's card.
+- **Submit uses a proxy route on a protected Site.** The route is `/_hub` →
+  the hub tunnel origin. cresa.one checks the viewer, then adds
+  `Authorization: Bearer <remote.proxyToken>` from the service variable
+  `PLANS_HUB_SUBMIT_TOKEN`. On the hub, that Bearer opens only
+  `/<app>/plans/_submit` and `/<app>/plans/_ping`, and the page token is still
+  checked.
+- **A public Site cannot submit.** Proxy routes exist only on protected Sites.
+  With `--access anyone_with_link`, Submit on the copy downloads a JSON file,
+  so the text also carries the hub link. Anyone who guesses the Site URL can
+  read a public Site, so keep it restricted.
+- `publish.sh` runs with `--no-verify` on a protected Site, because every
+  file answers with the access gate. The card check in step 6 replaces it.
 
 ### Reviewing from your phone (v19 remote + notify)
 

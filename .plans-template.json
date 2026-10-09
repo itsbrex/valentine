@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "sourceVersion": 30,
-  "sourceHash": "1cb1aa7b654e6c69823a5d12bce50145f866dcb481738b3bb90f3dcb69e02043",
+  "sourceVersion": 32,
+  "sourceHash": "f977146933a91564b39f6081edb92ac94c47bae8aa8346527cc52735de8e0970",
   "variant": "",
   "files": {
-    "scripts/plans.mjs": "87c454492f2da1d85240c3eef37f2f9dba5c1f3f96816c93f20e64b062c1e1b0",
+    "scripts/plans.mjs": "4038acaa70361a33965c2d8aa2d02de61a66dc704479733c515542fa94bc89bd",
     "docs/plans/.plan-template.html": "4d15c9631d7ea1c27381fe03c9c70b3a226a6db226e1ea985fe0a149a547b703",
-    "docs/plans/DESIGN.md": "9a59eda409a5545fc6d7b93342c4c71cf7a5f7ddd836c5f848e70e7ab35f4fe3",
-    "docs/plans/README.md": "c86947760cc1aac0a0645a2f82f0e6f3381a97c11005de0bb2c73ae7f970c073"
+    "docs/plans/DESIGN.md": "a1af6d2e80264947dca1f2c1eddaf79f3945077ab6d02eee5c613d612e7a5324",
+    "docs/plans/README.md": "2aad469e466427f0f9d4eb1c559baab83b557359f2cb169c754f27fb388ab239"
   }
 }

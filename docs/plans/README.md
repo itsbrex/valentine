@@ -119,6 +119,24 @@ bun run plans hub status                              # remote + notify lines at
 Details, security model and the per-page ENDPOINT rewrite: `DESIGN.md`
 ("Reviewing from your phone").
 
+## Publish to cresa.one (v31)
+
+With a publish Site set, `bun run plans wait <slug>` first copies the plan to
+that Site. It then checks the link card and texts you the Site link, for
+example `https://plans.cresa.one/<appName>/003-<slug>.html`. If the publish
+fails, `wait` exits with code 3 and texts nothing.
+
+```bash
+bun run plans hub publish set --site plans --allow you@example.com   # once per machine
+bun run plans publish <slug> [--notify]   # publish one plan now (no wait)
+bun run plans hub publish status          # config, live access mode, submit route
+```
+
+The Site is restricted to the allowed emails. Link cards stay public. Submit on
+the Site copy reaches Claude through the Site's `/_hub` proxy route. The
+checklist and rules are in `DESIGN.md`, under "Done means published, checked,
+and texted" and "Publishing to a cresa.one Site".
+
 ## Serving apps (portless — REQUIRED, no raw ports)
 
 ```bash
