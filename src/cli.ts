@@ -19,7 +19,7 @@ import {
   type OnnxDtype,
 } from "./config.js";
 import { makeConnector, crmKey, missingCrmCreds } from "./connectors/index.js";
-import { sweepAll, CRM_LABELS } from "./sweep.js";
+import { sweepAll, CRM_LABELS, type SweepResult } from "./sweep.js";
 import {
   makeClient,
   MODELS,
@@ -347,6 +347,21 @@ async function runInit(cfg: Config, args: string[] = []): Promise<void> {
   p.outro(pc.dim("Ready. Try:  ") + pc.cyan("valentine acme.com"));
 }
 
+/** Send a sweep's brief to a notify channel, rendered like the watch daemon's.
+ *  `stderr` keeps a text channel off stdout (the `--json` contract). */
+async function sendNotify(
+  cfg: Config,
+  channel: NotifyChannel,
+  target: string,
+  res: SweepResult,
+  crmNames: string,
+  stderr = false,
+): Promise<void> {
+  const writes = writesEnabled(cfg);
+  const rich = slashMessage(target, res, { crms: crmNames, elapsedMs: res.elapsedMs, writes }, writes ? { interactive: { writes } } : {});
+  await notify(channel, target, rich.text, { blocks: rich.blocks, stderr });
+}
+
 async function runLookup(cfg: Config, target: string, json: boolean, args: string[] = []): Promise<void> {
   const missing = missingCrmCreds(cfg);
   if (missing.length || (cfg.provider === "anthropic" && !cfg.anthropicKey)) {
@@ -364,9 +379,23 @@ async function runLookup(cfg: Config, target: string, json: boolean, args: strin
   const client = makeClient(cfg);
   const crmNames = activeCrms(cfg).map((c) => CRM_LABELS[c]).join(" + ");
 
+  // --notify=slack|macos|fullscreen|stdout (use the `=` form: a bare `slack`
+  // positional would be read as the `slack` command).
+  const channel = getFlag(args, "notify") as NotifyChannel | undefined;
+
   if (json) {
     const res = await sweepAll(client, cfg, target);
     console.log(sweepToJson(res, target));
+    // Machine callers (PopClip, scripts) can ask for the same Block Kit record the
+    // watch daemon sends. Failures go to stderr and never change the exit code,
+    // which still encodes the verdict.
+    if (channel) {
+      try {
+        await sendNotify(cfg, channel, target, res, crmNames, true);
+      } catch (e: any) {
+        console.error(`notify ${channel}: ${e?.message ?? e}`);
+      }
+    }
     process.exit(exitCodeFor(res.combined));
   }
 
@@ -383,14 +412,11 @@ async function runLookup(cfg: Config, target: string, json: boolean, args: strin
   s.stop(pc.green("done"));
   p.note(renderSweep(res!), pc.bold(target));
 
-  // --notify slack|macos|fullscreen|stdout: also push the brief to a channel —
-  // the same rendering the watch daemon sends, handy for sharing or testing.
-  const channel = getFlag(args, "notify") as NotifyChannel | undefined;
+  // --notify: also push the brief to a channel — the same rendering the watch
+  // daemon sends, handy for sharing or testing.
   if (channel) {
-    const writes = writesEnabled(cfg);
-    const rich = slashMessage(target, res!, { crms: crmNames, elapsedMs: res!.elapsedMs, writes }, writes ? { interactive: { writes } } : {});
     try {
-      await notify(channel, target, rich.text, { blocks: rich.blocks });
+      await sendNotify(cfg, channel, target, res!, crmNames);
       p.log.success(`sent to ${channel}`);
     } catch (e: any) {
       p.log.error(`notify ${channel}: ${e?.message ?? e}`);
@@ -423,7 +449,7 @@ function printHelp(): void {
       "  --port <n>          `slack` server port (default 3141)\n" +
       "  --once --lead <min> --interval <min> --notify <macos|fullscreen|stdout|slack>\n" +
       "                      `watch` options (defaults: 30 min lead, 5 min poll, macos)\n" +
-      "  --notify <channel>  on a sweep: also send the brief there (slack = Block Kit DM)\n" +
+      "  --notify=<channel>  on a sweep (incl. --json): also send the brief there (slack = Block Kit DM)\n" +
       "  --strategy <brief|agent>  brief (default): deterministic reads + 1 model call;\n" +
       "                      agent: the tool-calling loop. Also VALENTINE_STRATEGY / config\n" +
       "  --version           print version\n" +

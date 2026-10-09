@@ -92,7 +92,7 @@ and click-to-act links (open the CRM record · website · LinkedIn):
 
 - **CLI** — colored block, facts, links as real hyperlinks in terminals that
   support them (iTerm2, Terminal.app, WezTerm, kitty, VS Code). Add
-  `--notify slack` to also DM yourself the brief.
+  `--notify=slack` to also DM yourself the brief (works with `--json` too).
 - **`--json` / MCP** — `facts` (people, lists, notes, connection, dates) and
   `facts.links` next to the verdict, so agents can act without parsing prose.
 - **Slack** — Block Kit for both the `/valentine` slash command and the

@@ -34,6 +34,24 @@ function mockSlack(responses: Record<string, unknown>) {
   }) as typeof fetch;
 }
 
+test("stdout: the stderr option keeps the text off stdout (the --json contract)", async () => {
+  const out: string[] = [];
+  const err: string[] = [];
+  const log = console.log;
+  const error = console.error;
+  console.log = (s: string) => void out.push(s);
+  console.error = (s: string) => void err.push(s);
+  try {
+    await notify("stdout", "acme.com", "clean", { stderr: true });
+    await notify("stdout", "acme.com", "clean");
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+  assert.deepEqual(err, ["✦ acme.com\n  clean"]);
+  assert.deepEqual(out, ["✦ acme.com\n  clean"]);
+});
+
 test("slack: missing env produces a clear setup error, no network call", async () => {
   delete process.env.VALENTINE_SLACK_BOT_TOKEN;
   delete process.env.VALENTINE_SLACK_DM_USER;

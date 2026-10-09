@@ -87,6 +87,9 @@ export async function slackApi(token: string, method: string, payload: unknown):
 export interface NotifyExtra {
   /** Slack Block Kit blocks; `text` (title + body) stays the fallback. */
   blocks?: unknown[];
+  /** Print the plain-text fallback to stderr, not stdout — for `--json`,
+   *  where stdout must carry only the verdict object. */
+  stderr?: boolean;
 }
 
 async function slackDm(title: string, body: string, extra: NotifyExtra = {}): Promise<void> {
@@ -113,7 +116,7 @@ export async function notify(
 ): Promise<void> {
   if (channel === "slack") return slackDm(title, body, extra);
   if (channel === "stdout" || process.platform !== "darwin") {
-    console.log(`✦ ${title}\n${body.replace(/^/gm, "  ")}`);
+    (extra.stderr ? console.error : console.log)(`✦ ${title}\n${body.replace(/^/gm, "  ")}`);
     return;
   }
   if (channel === "fullscreen") return fullscreen(title, body);
