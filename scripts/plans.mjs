@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// PLANS_TPL_VERSION: 32
+// PLANS_TPL_VERSION: 33
 // Plan-page toolchain for docs/plans/ — browse, create, and index interactive
 // HTML plan pages. Runs on `bun` (preferred, faster) or `node`.
 //
@@ -83,6 +83,8 @@
 // line instead of metric tiles, no colored side borders, thumb-reach action bar
 // on phones, clearer status/submit copy, themed browser surfaces, an authored
 // send moment, and an axe-clean paper theme. Visual evidence in provenance/.
+// v33 (notify, 2026-10-09): `plans wait` waits for each link's card, not just
+// its page, before texting; see warmPreviewCards.
 // v32 (docs, 2026-10-06): DESIGN.md says to start background waits as
 // `bun scripts/plans.mjs wait`, because token-saver ends `bun run …` tasks at 300 s.
 // v31 (publish, 2026-10-06): `plans wait` copies the plan to a cresa.one Site
@@ -1162,16 +1164,32 @@ async function cmdNotify(argv) {
 // iMessage fetches the page the instant the text lands, and a cold Open Graph
 // card takes a few seconds to render — long enough for the preview to come back
 // bare. Ask the local hub for each link first so the card is already on disk.
+// v33: since hub v24 a page waits at most CARD_WAIT_MS (1.5 s) for its card,
+// so fetching the page only starts the render. The card URL waits for it, so
+// fetch that too: the text goes out once the card is current. Fetching the page
+// alone let the 2026-10-09 06:45 text leave 2 s before its card, and Messages
+// built no link preview.
+function metaContent(body, prop) {
+  const tag = body.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, 'i'))?.[0];
+  const content = tag?.match(/content=["']([^"']*)["']/i)?.[1];
+  return content ? decodeHtmlText(content) : '';
+}
 async function warmPreviewCards(links) {
   const cfg = await hubConfig();
   const secret = cfg.remote?.secret;
   if (!secret || !links?.length) return;
-  const port = await hubPort();
+  const local = `http://127.0.0.1:${await hubPort()}`;
+  const get = async (url) => {
+    try { const r = await fetch(url, { signal: AbortSignal.timeout(45000) }); return r.ok ? await r.text() : ''; } catch { return ''; }
+  };
   for (const l of links.slice(0, 6)) {
     let route = null;
     try { route = new URL(l.url).pathname; } catch { continue; }
-    const url = `http://127.0.0.1:${port}${route}?key=${encodeURIComponent(secret)}`;
-    try { const r = await fetch(url, { signal: AbortSignal.timeout(45000) }); await r.arrayBuffer(); } catch {}
+    const page = await get(`${local}${route}?key=${encodeURIComponent(secret)}`);
+    // The hub names the card on the public origin; ask the local port for it.
+    let card = null;
+    try { const u = new URL(metaContent(page, 'og:image')); card = `${local}${u.pathname}${u.search}`; } catch {}
+    if (card) await get(card);
   }
 }
 // v31: with a publish Site configured, the plan is copied there BEFORE the
@@ -1492,11 +1510,6 @@ function runPublishScript(pub, viewer) {
 // og:title names this plan and og:image answers 200 image/*. Retries briefly
 // because the Site CDN can serve the previous version for a few seconds.
 async function verifyPreview(url, expectTitle) {
-  const metaContent = (body, prop) => {
-    const tag = body.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, 'i'))?.[0];
-    const content = tag?.match(/content=["']([^"']*)["']/i)?.[1];
-    return content ? decodeHtmlText(content) : '';
-  };
   const want = bareTitle(expectTitle).slice(0, 40);
   let reason = 'not checked';
   for (let attempt = 0; attempt < 6; attempt++) {
