@@ -24,6 +24,9 @@ export interface Target {
   /** Normalized value: lower-cased bare domain, or the trimmed name. */
   value: string;
   raw: string;
+  /** Set when the target was a LinkedIn or Crunchbase page: the name comes
+   *  from its slug, and `url` is the page itself (no query or fragment). */
+  profile?: { platform: "linkedin" | "crunchbase"; kind: "company" | "person"; url: string };
 }
 
 /** A step in a sweep, for live instrumentation (the lab dashboard, verbose
@@ -60,9 +63,44 @@ export interface Evidence {
 
 const DOMAIN_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
+/** A company or person page on a platform whose own domain is never the
+ *  target: linkedin.com/company/acme-robotics is Acme Robotics, not LinkedIn. */
+const PROFILE_RE =
+  /^(?:[a-z]+:\/\/)?(?:[a-z0-9-]+\.)*(linkedin|crunchbase)\.com\/(company|showcase|school|in|organization|person)\/([^/?#\s]+)/i;
+/** Trailing slug words that are legal or vanity suffixes, not the name a CRM
+ *  stores ("acme-inc", "rocket-lab-usa"). */
+const SLUG_SUFFIX = new Set(["inc", "llc", "ltd", "corp", "corporation", "co", "usa", "us", "hq", "official"]);
+
+/** "linkedin.com/company/acme-inc" → Acme with its page; undefined when the
+ *  input is not a company or person page on LinkedIn or Crunchbase. */
+function profileTarget(raw: string): Target | undefined {
+  const m = PROFILE_RE.exec(raw.trim());
+  if (!m) return undefined;
+  const platform = m[1].toLowerCase() as "linkedin" | "crunchbase";
+  const section = m[2].toLowerCase();
+  let slug: string;
+  try {
+    slug = decodeURIComponent(m[3]);
+  } catch {
+    slug = m[3];
+  }
+  const person = section === "in" || section === "person";
+  let words = slug.toLowerCase().split(/[-_\s]+/).filter(Boolean);
+  // Personal profile slugs often end in a generated id: "jane-doe-4b2a1c9".
+  if (person && words.length > 1 && /\d/.test(words[words.length - 1])) words = words.slice(0, -1);
+  while (words.length > 1 && SLUG_SUFFIX.has(words[words.length - 1])) words = words.slice(0, -1);
+  if (!words.length) return undefined;
+  const value = words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+  const url = `https://www.${platform}.com/${section}/${m[3]}`;
+  return { kind: "name", value, raw, profile: { platform, kind: person ? "person" : "company", url } };
+}
+
 /** "https://www.Acme.com/about", "jane@acme.com", "acme.com" → domain acme.com;
- *  anything else is a name. */
+ *  a LinkedIn or Crunchbase company/person page → that name; anything else
+ *  is a name. */
 export function parseTarget(raw: string): Target {
+  const profile = profileTarget(raw);
+  if (profile) return profile;
   let s = raw.trim();
   const at = s.indexOf("@");
   if (at !== -1 && !/\s/.test(s)) s = s.slice(at + 1);

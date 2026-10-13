@@ -43,6 +43,43 @@ test("parseTarget: domains from bare, URL, and email forms; else a name", () => 
   assert.deepEqual(parseTarget("Jane Founder"), { kind: "name", value: "Jane Founder", raw: "Jane Founder" });
 });
 
+test("parseTarget: a LinkedIn or Crunchbase page names the company or person, never the platform", () => {
+  assert.deepEqual(parseTarget("https://www.linkedin.com/company/acme-robotics/"), {
+    kind: "name",
+    value: "Acme Robotics",
+    raw: "https://www.linkedin.com/company/acme-robotics/",
+    profile: { platform: "linkedin", kind: "company", url: "https://www.linkedin.com/company/acme-robotics" },
+  });
+  // Country subdomains, tracking params, legal suffixes and a scheme-less paste.
+  assert.equal(parseTarget("https://uk.linkedin.com/company/acme-inc?trk=public").value, "Acme");
+  assert.equal(parseTarget("linkedin.com/showcase/acme-labs").value, "Acme Labs");
+  // A personal profile's generated id is not part of the name.
+  const person = parseTarget("linkedin.com/in/jane-doe-4b2a1c9");
+  assert.equal(person.value, "Jane Doe");
+  assert.equal(person.profile?.kind, "person");
+  assert.equal(person.profile?.url, "https://www.linkedin.com/in/jane-doe-4b2a1c9");
+  const cb = parseTarget("https://www.crunchbase.com/organization/rocket-lab-usa");
+  assert.deepEqual([cb.kind, cb.value, cb.profile?.platform], ["name", "Rocket Lab", "crunchbase"]);
+  assert.equal(parseTarget("crunchbase.com/person/peter-beck").profile?.kind, "person");
+  // The platforms themselves stay ordinary domain targets.
+  assert.deepEqual([parseTarget("linkedin.com").kind, parseTarget("https://www.crunchbase.com/").value], ["domain", "crunchbase.com"]);
+  assert.equal(parseTarget("https://www.linkedin.com/feed/").kind, "domain");
+});
+
+test("gather: a LinkedIn company URL searches by the company's name, not linkedin.com", async () => {
+  const { crm, calls } = fakeCrm([]);
+  await gather(crm, "https://www.linkedin.com/company/acme-robotics");
+  assert.deepEqual(calls, [
+    { object: "companies", name: "Acme Robotics" },
+    { object: "people", name: "Acme Robotics" },
+  ]);
+});
+
+test("links: a LinkedIn target links its own page when the record has none", async () => {
+  const j = judge(await gather(fakeCrm([match({ owner: "JP", linkedin: undefined })]).crm, "https://www.linkedin.com/company/acme"), "Attio");
+  assert.equal(j.facts.links.find((l) => l.label === "LinkedIn")!.url, "https://www.linkedin.com/company/acme");
+});
+
 test("rankMatches: the record that IS the target beats a lookalike sharing its website", () => {
   const sub = match({ recordId: "sub", name: "Urban Oaks Builders", owner: "X", lastInteraction: "activity · 2018-02-07" });
   const hq = match({ recordId: "hq", name: "Hines", domain: "hines.com", lastInteraction: "activity · 2026-01-01" });

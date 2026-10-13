@@ -146,6 +146,11 @@ test("createLinks: with nothing anywhere, the domain alone seeds the forms; a co
   assert.deepEqual(createLinks({ ...formCrm(), webUrls: undefined }, "x.com"), []);
 });
 
+test("createLinks: a LinkedIn profile seeds the person, a company page the company", () => {
+  assert.equal(createLinks(formCrm(), "https://www.linkedin.com/in/jane-doe-4b2a1c9")[0].url, "https://sf/new/lead?person=Jane+Doe");
+  assert.equal(createLinks(formCrm(), "https://www.linkedin.com/company/acme-robotics")[0].url, "https://sf/new/lead?name=Acme+Robotics");
+});
+
 test("sweepAll: a CRM that throws is flagged unreachable (not just ambiguous)", async () => {
   const client = { messages: { create: async () => ({ content: [] as never }) } };
   const conf = cfg({ crm: "salesforce", crms: ["salesforce", "attio"], attioKey: "k".repeat(20) });

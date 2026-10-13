@@ -85,8 +85,10 @@ export function createLinks(
   if (!create) return [];
   const t = parseTarget(target);
   const domain = from?.facts?.domain ?? (t.kind === "domain" ? t.value : undefined);
-  const name = from?.facts?.matchObject === "companies" ? from.facts.matchName : from?.facts?.parent?.label ?? (t.kind === "name" ? t.value : undefined);
-  const person = from?.facts?.matchObject === "people" ? from.facts.matchName : from?.facts?.people[0];
+  // A LinkedIn/Crunchbase person page names a person, never the company.
+  const targetPerson = t.profile?.kind === "person" ? t.value : undefined;
+  const name = from?.facts?.matchObject === "companies" ? from.facts.matchName : from?.facts?.parent?.label ?? (t.kind === "name" && !targetPerson ? t.value : undefined);
+  const person = from?.facts?.matchObject === "people" ? from.facts.matchName : from?.facts?.people[0] ?? targetPerson;
   const note = from?.facts?.matchUrl ? `${from.crmName}: ${from.facts.matchUrl}` : undefined;
   const out: RecordLink[] = [];
   const lead = create("lead", { domain, name, person, note });

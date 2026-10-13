@@ -34,7 +34,8 @@ const TOOL = {
     properties: {
       target: {
         type: "string",
-        description: "Company domain (e.g. acme.com) or company/founder name.",
+        description:
+          "Company domain (e.g. acme.com), company/founder name, or a LinkedIn / Crunchbase company or person URL (searched by the name in it).",
       },
     },
     required: ["target"],

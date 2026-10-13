@@ -57,7 +57,9 @@ function linksFor(top: CRMMatch | undefined, crmName: string, target: Evidence["
   // their employer's, so it never stands in for the company link here —
   // otherLinks uses it for the person button instead.
   const q = top?.name ?? target.value;
-  const page = top?.object === "companies" ? top.linkedin : undefined;
+  // A LinkedIn page the user handed us stands in when the record has none.
+  const given = target.profile?.platform === "linkedin" && target.profile.kind === "company" ? target.profile.url : undefined;
+  const page = (top?.object === "companies" ? top.linkedin : undefined) ?? given;
   links.push({
     label: "LinkedIn",
     url: page ?? `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(q)}`,
