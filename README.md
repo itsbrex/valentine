@@ -57,7 +57,9 @@ changes: every button is a link.
 2. **A brief** (`src/gather.ts` + `src/brief.ts`) — the default sweep. For a
    domain the reads are always the same, so Valentine does them itself:
    search → rank → context on the top matches. The verdict is a rule over that
-   evidence (any real signal = prior contact), so it never depends on a model
+   evidence (any real signal = prior contact; a signal only on a name,
+   subdomain or loose website match = ambiguous, since it may be a different
+   company), so it never depends on a model
    getting it right. The model makes exactly **one** call — the one-line
    summary — with a timeout, a template fallback, and a fact-check (an owner or
    a date the CRM didn't give us gets the line thrown out). Two CRMs on a local

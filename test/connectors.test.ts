@@ -197,6 +197,7 @@ test("Salesforce: company search queries Account by Website and maps fields", as
     object: "companies",
     name: "Acme",
     domain: "acme.com", // www. stripped from Website
+    matchedBy: "domain", // the account's own host IS the target: confirmed
     owner: "Sarah Lee",
     ownerId: "005S",
     ownerUrl: `${SF}/r/User/005S/view`,
@@ -382,8 +383,17 @@ test("Salesforce: people search also returns unconverted Leads, marked as such, 
   assert.equal(out[0].url, "https://org.my.salesforce.com/lightning/r/Lead/00Q1/view");
   assert.equal(out[0].domain, "acme.com");
   assert.equal(out[0].owner, "Sam Rep");
+  assert.equal(out[0].matchedBy, "domain");
   const lead = calls.map((c) => soqlOf(c.url)).find((q) => q.includes("FROM Lead"))!;
   assert.match(lead, /IsConverted = false AND \(Email LIKE '%@acme\.com' OR Website LIKE '%acme\.com%'\)/);
+});
+
+test("Salesforce: a Lead found only by a Website substring is a loose candidate, not a confirmed match", async () => {
+  mockFetch((url) => (soqlOf(url).includes("FROM Lead")
+    ? { records: [{ Id: "00Q2", Name: "Max Lookalike", Company: "Machines", Email: "max@machines.com", Website: "machines.com", OwnerId: "005X", Owner: { Name: "Sam Rep", IsActive: true } }] }
+    : { records: [] }));
+  const out = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "people", domain: "hines.com" });
+  assert.deepEqual(out.map((m) => [m.recordId, m.matchedBy]), [["00Q2", "loose"]]);
 });
 
 test("Salesforce: a restricted Lead object costs nothing — Contacts still come back", async () => {
@@ -485,6 +495,7 @@ test("Affinity: search hits organizations with interaction dates and maps them",
   assert.deepEqual(m, {
     recordId: "7",
     object: "companies",
+    matchedBy: "domain",
     name: "Acme",
     domain: "acme.com",
     lastEmail: "2026-05-12",
@@ -493,6 +504,22 @@ test("Affinity: search hits organizations with interaction dates and maps them",
     firstInteraction: "2025-01-02",
     linkedPeople: 3,
   });
+});
+
+test("Affinity: term search is fuzzy, so only a record's own domains confirm a domain target", async () => {
+  mockFetch(() => ({
+    organizations: [
+      { id: 1, name: "Acme Holdings", domain: "acmeholdings.com", domains: ["acmeholdings.com", "acme.com"] },
+      { id: 2, name: "Acme EU", domain: "eu.acme.com" },
+      { id: 3, name: "Acme Mills", domain: "acmemills.com" },
+    ],
+  }));
+  const ms = await new AffinityConnector("key").search({ object: "companies", domain: "acme.com" });
+  assert.deepEqual(ms.map((m) => m.matchedBy), ["domain", "subdomain", "loose"]);
+  // A person ties by email domain.
+  mockFetch(() => ({ persons: [{ id: 9, first_name: "Jane", last_name: "Founder", primary_email: "jane@acme.com", emails: ["jane@acme.com"] }] }));
+  const [p] = await new AffinityConnector("key").search({ object: "people", domain: "acme.com" });
+  assert.equal(p.matchedBy, "domain");
 });
 
 test("Affinity: getContext strips note HTML and dedupes list entries", async () => {
@@ -536,18 +563,34 @@ test("Salesforce: the Website substring match is post-filtered to the real domai
   });
 
   assert.deepEqual(ms.map((m) => m.recordId), ["001H", "001S"], "machines.com and sunshines.com dropped");
+  // Only the exact host confirms; the subdomain is a candidate to verify.
+  assert.deepEqual(ms.map((m) => m.matchedBy), ["domain", "subdomain"]);
 });
 
-test("Salesforce: a name-related account survives even on a different domain", async () => {
+test("Salesforce: a name-related account survives even on a different domain, as a candidate", async () => {
   mockFetch(() => ({ records: [{ Id: "001H", Name: "Hines Interests", Website: "https://hines-interests.co.uk" }] }));
   const ms = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "companies", domain: "hines.com" });
-  assert.deepEqual(ms.map((m) => m.recordId), ["001H"]);
+  assert.deepEqual(ms.map((m) => [m.recordId, m.matchedBy]), [["001H", "name"]]);
 });
 
 test("Salesforce: a single loose hit is kept rather than returning nothing", async () => {
   mockFetch(() => ({ records: [{ Id: "001Z", Name: "Totally Different", Website: "https://notit.example" }] }));
   const ms = await new SalesforceConnector("tok", "https://org.my.salesforce.com").search({ object: "companies", domain: "hines.com" });
   assert.equal(ms.length, 1, "one weak match beats pretending there is none");
+  assert.equal(ms[0].matchedBy, "loose");
+});
+
+test("Salesforce: a capped Website search with nothing precise keeps its hits as loose candidates, never a clean miss", async () => {
+  // LIMIT 10 came back full: the real account may sit past the cap.
+  const records = Array.from({ length: 10 }, (_, i) => ({ Id: `001L${i}`, Name: `Lookalike ${i}`, Website: `https://www.machines${i}.com` }));
+  mockFetch(() => ({ records }));
+  const conn = new SalesforceConnector("tok", "https://org.my.salesforce.com");
+  const capped = await conn.search({ object: "companies", domain: "hines.com" });
+  assert.equal(capped.length, 10);
+  assert.ok(capped.every((m) => m.matchedBy === "loose"));
+  // Under the cap the whole result set was seen, so the lookalikes drop out.
+  mockFetch(() => ({ records: records.slice(0, 3) }));
+  assert.deepEqual(await conn.search({ object: "companies", domain: "hines.com" }), []);
 });
 
 // ─── Salesforce: firmographics probe (f04) ──────────────────────────────────

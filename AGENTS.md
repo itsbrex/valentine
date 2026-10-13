@@ -86,6 +86,9 @@ is set — it errors out with instructions instead.
     "matchName": "Acme", "matchUrl": "https://app.attio.com/<ws>/company/rec_abc",
     "matchObject": "companies",    // or "people" (a Contact), then `parent` is its Account
     "domain": "acme.com", "matches": 1,
+    // "matchedBy": "subdomain" | "name" | "loose" – only on an "ambiguous" verdict that rests on a
+    //   candidate: the record ties to the target by less than its own domain (any match for a name
+    //   target counts), so it may be a different company. Confirm before treating it as prior contact.
     "ownerUrl": "https://…/lightning/r/User/005…/view",   // Salesforce only
     "ownerActive": true,           // false = deactivated or a placeholder like "Unassigned …"
     "contact": "Ravi Patel",       // who is most in touch, when the CRM tracks that apart from the

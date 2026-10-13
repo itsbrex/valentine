@@ -88,6 +88,17 @@ export function hasSignal(m: CRMMatch, ctx?: CRMContext): boolean {
   return false;
 }
 
+/** How a match ties to the target when that tie is too weak to confirm it:
+ *  every match of a name target ("Scitec" is not always SciTec), or a domain
+ *  hit the connector tagged as a subdomain, related name, or loose substring.
+ *  Undefined means confirmed: the record's own domain is the target, or the
+ *  CRM searched by an exact key. Follows salesforced's clearance contract
+ *  (C3): name-only and subdomain-only matches go to review, never "owned". */
+export function candidateTie(m: CRMMatch, target: Target): "subdomain" | "name" | "loose" | undefined {
+  if (target.kind === "name") return "name";
+  return m.matchedBy && m.matchedBy !== "domain" ? m.matchedBy : undefined;
+}
+
 /** Latest YYYY-MM-DD on a match, for recency ordering. */
 export function latestDate(m: CRMMatch): string {
   const dates = [m.lastMeeting, m.lastEmail, m.lastInteraction?.split(" · ").pop()].filter(

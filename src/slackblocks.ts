@@ -292,7 +292,9 @@ export function targetBlocks(target: string, res: SweepResult, idPrefix: string,
     for (const s of unreachable) head += pill(`${CRM_LABELS[s.crm]} unreachable`);
     head += ` · ${crmList(found)}`;
   } else if (ambiguous.length) {
-    head = `${MARK.ambiguous} ${link(domain, `https://${domain}`)}  ·  ${LABEL.ambiguous}${pill(`${ambiguous[0].facts?.matches ?? "several"} matches`)} · ${crmList(ambiguous)}`;
+    const tie = ambiguous[0].facts?.matchedBy;
+    const why = tie ? `${tie} match only` : `${ambiguous[0].facts?.matches ?? "several"} matches`;
+    head = `${MARK.ambiguous} ${link(domain, `https://${domain}`)}  ·  ${LABEL.ambiguous}${pill(why)} · ${crmList(ambiguous)}`;
   } else {
     head = `${unreachable.length ? MARK.ambiguous : MARK.clean} ${link(domain, /\./.test(domain) ? `https://${domain}` : undefined)}  ·  ${LABEL.clean}`;
     head += unreachable.length ? unreachable.map((s) => pill(`${CRM_LABELS[s.crm]} unreachable`)).join("") : pill("clear to reach out");

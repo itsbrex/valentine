@@ -50,6 +50,13 @@ export interface CRMMatch {
   linkedPeople?: number;
   /** Deep link to the record in the CRM's web app, when the API exposes one. */
   url?: string;
+  /** How a DOMAIN search tied this record to the target, set by connectors
+   *  whose search is looser than an exact key. "domain": the record's own
+   *  domain (or a person's email domain) is the target. "subdomain", "name"
+   *  (a related name on another domain) and "loose" (a lone or capped
+   *  substring hit) are candidates: a human confirms them before they count
+   *  as prior contact. Absent: the CRM searched by an exact key. */
+  matchedBy?: "domain" | "subdomain" | "name" | "loose";
   /** The record this one hangs off (a Contact's Account, a person's company). */
   parent?: RecordLink & { id: string };
   /** Deep links to the record's tabs / related lists, when the web app has them. */
@@ -201,6 +208,10 @@ export interface BriefFacts {
   domain?: string;
   /** How many records matched the target. */
   matches: number;
+  /** Set when the verdict rests on a candidate rather than a confirmed match:
+   *  the record ties to the target by a subdomain, a name, or a loose website
+   *  hit only. The verdict is then "ambiguous" until a human confirms it. */
+  matchedBy?: "subdomain" | "name" | "loose";
   ownerUrl?: string;
   /** False when the owner is deactivated / an "Unassigned" placeholder. */
   ownerActive?: boolean;

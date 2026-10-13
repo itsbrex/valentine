@@ -1,6 +1,8 @@
 // THE FAST PATH, step two: judge and brief. The verdict is a rule over the
 // evidence (any real signal → prior_contact — the same rule the system prompt
-// gave the agent), so it never depends on a model getting it right. The model's
+// gave the agent), so it never depends on a model getting it right. A signal
+// only on a candidate (a name, subdomain or loose website match) reads
+// ambiguous instead: it may be a different company. The model's
 // only job is the one-line summary and one suggested next step, produced in a
 // single structured call with a timeout and a template fallback — so a slow or
 // flaky local model can cost you a nicer sentence, never the verdict, and never
@@ -8,7 +10,7 @@
 
 import type { CRMConnector, CRMMatch, CRMContext, Verdict, BriefFacts, RecordLink, ListMembership } from "./connectors/types.js";
 import type { ModelClient } from "./models.js";
-import { gather, hasSignal, type Evidence, type TraceFn, type ModelUsage } from "./gather.js";
+import { gather, hasSignal, candidateTie, type Evidence, type TraceFn, type ModelUsage } from "./gather.js";
 
 export interface Judged {
   verdict: Verdict["verdict"];
@@ -124,9 +126,14 @@ function lastTouchUrl(top: CRMMatch, ctx: CRMContext | undefined, lastTouch: str
 export function judge(ev: Evidence, crm: CRMConnector | string): Judged {
   const crmName = typeof crm === "string" ? crm : crm.name;
   const connector = typeof crm === "string" ? undefined : crm;
-  const top = ev.matches[0];
-  const ctx = top ? ev.contexts.get(top.recordId) : undefined;
   const flagged = ev.matches.filter((m) => hasSignal(m, ev.contexts.get(m.recordId)));
+  const confirmed = flagged.filter((m) => !candidateTie(m, ev.target));
+  // Signals only on candidates: someone touched this company, or a different
+  // one with a similar name or website. The verdict rests on that candidate
+  // and stays ambiguous until a human confirms it is the same.
+  const candidate = confirmed.length ? undefined : flagged[0];
+  const top = candidate ?? ev.matches[0];
+  const ctx = top ? ev.contexts.get(top.recordId) : undefined;
   const lastTouch = top ? lastTouchOf(top) : undefined;
   const lists = (ctx?.lists ?? []).slice(0, 5);
   const people = (ctx?.peopleLinks ?? []).slice(0, 5).map((p) => ({ label: cleanName(p.label), url: p.url }));
@@ -141,6 +148,7 @@ export function judge(ev: Evidence, crm: CRMConnector | string): Judged {
     parent: top?.parent ? { label: top.parent.label, url: top.parent.url } : undefined,
     domain: top?.domain,
     matches: ev.matches.length,
+    matchedBy: candidate ? candidateTie(candidate, ev.target) : undefined,
     ownerUrl: top?.ownerUrl,
     ownerActive: top?.ownerActive,
     contact: top?.contact,
@@ -168,24 +176,36 @@ export function judge(ev: Evidence, crm: CRMConnector | string): Judged {
   for (const k of Object.keys(facts) as (keyof BriefFacts)[]) if (facts[k] === undefined) delete facts[k];
 
   let verdict: Verdict["verdict"];
-  if (flagged.length > 0) verdict = "prior_contact";
+  if (confirmed.length > 0) verdict = "prior_contact";
+  else if (candidate) verdict = "ambiguous";
   else if (ev.matches.length > 3 && ev.target.kind === "name") verdict = "ambiguous";
   else verdict = "clean";
 
+  const basis = confirmed.length ? confirmed : flagged;
   return {
     verdict,
     owner: top?.owner,
     lastTouch,
     status: statusOf(ctx),
-    citations: flagged.length ? flagged.slice(0, 3).map((m) => m.recordId) : top ? [top.recordId] : [],
+    citations: basis.length ? basis.slice(0, 3).map((m) => m.recordId) : top ? [top.recordId] : [],
     facts,
   };
 }
+
+/** How a candidate tied to the target, as the template lines say it. */
+const TIE: Record<NonNullable<BriefFacts["matchedBy"]>, string> = {
+  subdomain: "a subdomain",
+  name: "name",
+  loose: "a loose website match",
+};
+const sameWhat = (j: Judged) => (j.facts.matchObject === "people" ? "person" : "company");
 
 /** The no-model summary. Always available, always true. */
 export function templateSummary(j: Judged, target: string): string {
   const name = j.facts.matchName ?? target;
   if (j.verdict === "clean") return `No prior contact on record for ${name}.`;
+  if (j.verdict === "ambiguous" && j.facts.matchedBy)
+    return `Possible match: ${name}${j.owner ? ` (${j.owner})` : ""} ties to ${target} by ${TIE[j.facts.matchedBy]} only. Confirm it is the same ${sameWhat(j)} before the call.`;
   if (j.verdict === "ambiguous")
     return `${j.facts.matches} records match "${target}" — none clearly it. Check the CRM before the call.`;
   const bits: string[] = [];
@@ -201,6 +221,8 @@ export function templateSummary(j: Judged, target: string): string {
 export function templateNextStep(j: Judged, crmName: string): string {
   const f = j.facts;
   if (j.verdict === "clean") return `Clear to reach out — create the record in ${crmName} so the next sweep sees it.`;
+  if (j.verdict === "ambiguous" && f.matchedBy)
+    return `Open ${f.matchName ?? "the record"} in ${crmName} and confirm it is the same ${sameWhat(j)} before treating it as prior contact.`;
   if (j.verdict === "ambiguous") return `Open the ${f.matches} matches in ${crmName} and confirm which one is them before the call.`;
   if (f.nextActivity?.date) {
     const who = f.nextActivity.owner ?? j.owner;
@@ -362,6 +384,8 @@ export async function brief(
   // Clean = nothing to say beyond "nothing found". Don't spend a model call.
   if (opts.noModel) trace({ type: "model.skip", crm: crm.name, reason: "noModel" });
   else if (j.verdict === "clean") trace({ type: "model.skip", crm: crm.name, reason: "clean verdict — nothing to summarize" });
+  // A model line could drop the "possible match" caveat; the template keeps it.
+  else if (j.facts.matchedBy) trace({ type: "model.skip", crm: crm.name, reason: "unconfirmed match – template keeps the caveat" });
   else {
     const timeoutMs = opts.timeoutMs ?? 25_000;
     const user = briefUserPrompt(j, target, crm.name);

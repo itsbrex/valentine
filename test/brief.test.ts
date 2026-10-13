@@ -98,6 +98,61 @@ test("judge: many weak name matches → ambiguous", async () => {
   assert.equal(j.verdict, "ambiguous");
 });
 
+// Clearance contract C3: only the record's own domain confirms it. A signal
+// on a subdomain, related-name or loose website hit may belong to a
+// different company, so it reads ambiguous until a human confirms it.
+test("judge: a signal only on a candidate → ambiguous, never prior_contact", async () => {
+  for (const matchedBy of ["subdomain", "name", "loose"] as const) {
+    const { crm } = fakeCrm([match({ name: "Acme Mills", domain: "acmemills.com", owner: "Glenn", lastEmail: "2026-09-01", matchedBy })]);
+    const j = judge(await gather(crm, "acme.com"), "Salesforce");
+    assert.equal(j.verdict, "ambiguous", matchedBy);
+    assert.equal(j.facts.matchedBy, matchedBy);
+    assert.deepEqual(j.citations, ["rec_1"]);
+  }
+  const j = judge(await gather(fakeCrm([match({ name: "Acme Mills", owner: "Glenn", matchedBy: "name" })]).crm, "acme.com"), "Salesforce");
+  assert.equal(templateSummary(j, "acme.com"), "Possible match: Acme Mills (Glenn) ties to acme.com by name only. Confirm it is the same company before the call.");
+  assert.equal(templateNextStep(j, "Salesforce"), "Open Acme Mills in Salesforce and confirm it is the same company before treating it as prior contact.");
+});
+
+test("judge: the exact-domain record decides; a candidate beside it is not cited", async () => {
+  const exact = match({ recordId: "exact", owner: "JP", lastEmail: "2026-09-16", matchedBy: "domain" });
+  const sub = match({ recordId: "sub", name: "Acme EU", domain: "eu.acme.com", owner: "Glenn", matchedBy: "subdomain" });
+  const j = judge(await gather(fakeCrm([exact, sub]).crm, "acme.com"), "Salesforce");
+  assert.equal(j.verdict, "prior_contact");
+  assert.equal(j.owner, "JP");
+  assert.deepEqual(j.citations, ["exact"]);
+  assert.equal(j.facts.matchedBy, undefined);
+  // The exact record has no signal, the subdomain one does: ambiguous, resting on the candidate.
+  const k = judge(await gather(fakeCrm([match({ recordId: "exact", matchedBy: "domain" }), sub]).crm, "acme.com"), "Salesforce");
+  assert.equal(k.verdict, "ambiguous");
+  assert.equal(k.facts.matchName, "Acme EU");
+  assert.equal(k.facts.matchedBy, "subdomain");
+  assert.equal(k.owner, "Glenn");
+});
+
+test("judge: a name target never confirms on its own ('Scitec' is not always SciTec)", async () => {
+  const { crm } = fakeCrm([match({ name: "Scitec", owner: "Unassigned NewJersey", ownerActive: false })]);
+  const j = judge(await gather(crm, "SciTec"), "Salesforce");
+  assert.equal(j.verdict, "ambiguous");
+  assert.equal(j.facts.matchedBy, "name");
+  assert.match(templateSummary(j, "SciTec"), /^Possible match: Scitec \(Unassigned NewJersey\) ties to SciTec by name only\./);
+});
+
+test("brief: an unconfirmed match skips the model so the caveat survives", async () => {
+  let asked = 0;
+  const model: ModelClient = {
+    ...noModel,
+    structured: async () => {
+      asked++;
+      return { summary: "Glenn owns Acme Mills.", next_step: "Call Glenn." };
+    },
+  };
+  const v = await brief(model, "m", fakeCrm([match({ name: "Acme Mills", owner: "Glenn", matchedBy: "loose" })]).crm, "acme.com");
+  assert.equal(asked, 0);
+  assert.equal(v.verdict, "ambiguous");
+  assert.match(v.summary, /^Possible match: Acme Mills \(Glenn\) ties to acme\.com by a loose website match only\./);
+});
+
 test("templateSummary reads like the partner line, from facts only", async () => {
   const { crm } = fakeCrm([match({ owner: "JP Roach", lastMeeting: "2026-09-15", connectionStrength: "Very strong" })], {
     notes: [], lists: [{ list: "Pipeline", stage: "Negotiation" }], people: [],

@@ -31,6 +31,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { CRMConnector, CRMMatch, CRMContext, SearchQuery, Activity, ListMembership, RecordLink, WebUrls, CreatePrefill } from "./types.js";
+import { bestTie, hostTie } from "./match.js";
 
 const run = promisify(exec);
 const API = "/services/data/v59.0";
@@ -172,7 +173,7 @@ export class SalesforceConnector implements CRMConnector {
             people: this.relatedUrl("Account", r.Id, "Contacts"),
           },
         }));
-        return q.domain ? domainRelated(all, q.domain) : all;
+        return q.domain ? domainRelated(all, q.domain, recs.length >= ACCT_LIMIT) : all;
       }
 
       // "people" → Contact, plus unconverted Leads. By name, or by email
@@ -217,6 +218,9 @@ export class SalesforceConnector implements CRMConnector {
         recordId: r.Id,
         object: "people" as const,
         recordType: "Lead",
+        // `Website LIKE` is a substring match: only the lead's own email or
+        // website domain confirms it.
+        ...(q.domain ? { matchedBy: bestTie([r.Email?.split("@")[1], hostname(r.Website)], q.domain) ?? "loose" } : {}),
         name: r.Name ?? undefined,
         domain: r.Email?.split("@")[1] ?? hostname(r.Website),
         ...this.ownerOf(r),
@@ -339,7 +343,7 @@ export class SalesforceConnector implements CRMConnector {
   private acctTier = 0;
 
   private async accounts(where: string): Promise<any[]> {
-    const tail = `, (SELECT Id FROM Contacts LIMIT 6) FROM Account WHERE ${where} LIMIT 10`;
+    const tail = `, (SELECT Id FROM Contacts LIMIT 6) FROM Account WHERE ${where} LIMIT ${ACCT_LIMIT}`;
     const tiers = [`${ACCT_STANDARD}, ${ACCT_FIRMO.join(", ")}`, ACCT_STANDARD, ACCT_BARE];
     for (; this.acctTier < tiers.length; this.acctTier++) {
       try {
@@ -455,6 +459,9 @@ export class SalesforceConnector implements CRMConnector {
 }
 
 // --- account field sets (see the acctTier probe note) ---
+/** Accounts per search. A domain search that fills it may have left the real
+ *  account past the cap, so domainRelated treats it as capped. */
+const ACCT_LIMIT = 10;
 const ACCT_BARE = "Id, Name, Website, OwnerId, Owner.Name, Owner.IsActive, LastActivityDate";
 const ACCT_STANDARD = `${ACCT_BARE}, NumberOfEmployees, AnnualRevenue, Industry`;
 /** ZoomInfo managed-package enrichment, live-verified on the cresa org
@@ -486,18 +493,18 @@ function money(n: number): string {
 
 /** `Website LIKE '%hines.com%'` also matches machines.com. Keep only accounts
  *  whose website host IS the domain or a subdomain of it, or whose Name
- *  relates to the domain label (subsidiaries on a different domain).
- *  Single-hit exception: one loose hit and nothing precise is still better
- *  than pretending we found nothing — it just stays one match, honestly
- *  counted, instead of "1 of 10". Ported from the sf-ownership-desk rule. */
-function domainRelated(matches: CRMMatch[], domain: string): CRMMatch[] {
+ *  relates to the domain label (subsidiaries on a different domain), and tag
+ *  each with how it tied: only the exact host confirms the account; a
+ *  subdomain or a name is a candidate the verdict holds as ambiguous.
+ *  Nothing precise: one loose hit is kept as a candidate rather than
+ *  pretending we found nothing, and so is every hit of a capped search (the
+ *  real account may sit past the LIMIT, so "no match" would be a guess).
+ *  Ported from the sf-ownership-desk rule; the tags follow salesforced's
+ *  clearance contract (C3). */
+function domainRelated(matches: CRMMatch[], domain: string, capped = false): CRMMatch[] {
   const d = domain.toLowerCase().replace(/^www\./, "");
   const label = d.split(".")[0];
   const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const hostHit = (m: CRMMatch) => {
-    const h = m.domain?.toLowerCase().replace(/^www\./, "");
-    return !!h && (h === d || h.endsWith(`.${d}`));
-  };
   // Match name tokens, never a bare substring: "Machines Inc" contains
   // "hines" and that is the very bug this filter exists to kill.
   const nameHit = (m: CRMMatch) => {
@@ -508,9 +515,13 @@ function domainRelated(matches: CRMMatch[], domain: string): CRMMatch[] {
     if (joined.length < 4) return false;
     return joined.startsWith(label) || label.startsWith(joined); // "Ware Malcomb" ← waremalcomb.com
   };
-  const precise = matches.filter((m) => hostHit(m) || nameHit(m));
+  const tie = (m: CRMMatch): CRMMatch["matchedBy"] => hostTie(m.domain, d) ?? (nameHit(m) ? "name" : undefined);
+  const precise = matches.flatMap((m) => {
+    const matchedBy = tie(m);
+    return matchedBy ? [{ ...m, matchedBy }] : [];
+  });
   if (precise.length) return precise;
-  return matches.length === 1 ? matches : [];
+  return matches.length === 1 || capped ? matches.map((m) => ({ ...m, matchedBy: "loose" as const })) : [];
 }
 
 // --- opportunity field sets (see the probe note at the top) ---
