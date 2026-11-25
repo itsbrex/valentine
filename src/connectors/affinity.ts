@@ -11,6 +11,7 @@
 // fires on interaction dates, list membership, and notes.
 
 import type { CRMConnector, CRMMatch, CRMContext, SearchQuery } from "./types.js";
+import { bestTie } from "./match.js";
 
 const BASE = "https://api.affinity.co";
 
@@ -72,6 +73,9 @@ export class AffinityConnector implements CRMConnector {
       return {
         recordId: String(r.id),
         object: q.object,
+        // Term search is fuzzy: only the record's own domain (an organization's
+        // domains, a person's email domains) confirms a domain target.
+        ...(q.domain ? { matchedBy: domainTie(r, q.domain) } : {}),
         name: r.name ?? fullName(r),
         domain: r.domain ?? first(r.domains),
         lastEmail: ymd(d.last_email_date),
@@ -170,6 +174,16 @@ const count = (v: any) => (Array.isArray(v) ? v.length : undefined);
 const fullName = (r: any) =>
   [r?.first_name, r?.last_name].filter(Boolean).join(" ") || r?.primary_email || undefined;
 const stripHtml = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+/** How a term-search hit ties to a domain target: its own domain (or email
+ *  domain) confirms it, a subdomain is a candidate, and anything else the
+ *  fuzzy search returned is a loose hit. */
+function domainTie(r: any, domain: string): "domain" | "subdomain" | "loose" {
+  const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+  const emails = [r?.primary_email, ...list(r?.emails)].map((e) => (typeof e === "string" ? e.split("@")[1] : undefined));
+  const hosts = [r?.domain, ...list(r?.domains), ...emails].map((h) => (typeof h === "string" ? h : undefined));
+  return bestTie(hosts, domain) ?? "loose";
+}
 
 /** Label the single most-recent interaction by which dated field it matches. */
 function lastInteraction(d: any): string | undefined {

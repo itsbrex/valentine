@@ -35,18 +35,43 @@ on your machine — see [`AGENTS.md`](./AGENTS.md) for Cursor, Claude Code, etc.
 ## It reads. It never writes.
 
 Valentine surfaces and warns — it never touches your data, sends a message, or
-moves a deal. There are no write tools in the codebase, by design.
+moves a deal. The read path has no write capability at all: the `CRMConnector`
+contract exposes no mutating method, by design.
+
+**Opt-in write-through (off by default).** The Slack card can carry the
+buttons from the design — *Create company + person in Attio*, *Claim owner*,
+*Link IDs*, *Fix Attio match*, *Log to both CRMs*, *＋ Lead in Salesforce* —
+if you switch writes on (`valentine init --writes`, or `VALENTINE_WRITES=1`).
+They live in a separate `src/writers/` contract behind the `valentine slack`
+interactivity endpoint, every one sits behind a Slack confirm dialog that
+spells out exactly what gets written, and Attio can use its own write token
+(`VALENTINE_ATTIO_WRITE_KEY`) so the read token stays read-only. Salesforce
+writes ride the same browser session the reads use. Leave it off and nothing
+changes: every button is a link.
 
 ## How it works — three moving parts
 
 1. **A connector** (`src/connectors/`) — read-only CRM access behind a small
-   `CRMConnector` interface. Attio and Affinity out of the box; HubSpot /
-   Salesforce are one new file away.
-2. **An agent** (`src/agent.ts`) — the loop: model thinks → calls a read tool →
-   gets the result → repeats → calls `submit_verdict`. ~40 lines, hand-rolled on
-   the Anthropic API so you can read every line.
-3. **A trigger** (`src/cli.ts`) — CLI today; `valentine watch` (calendar) and a
-   Slack command on the roadmap.
+   `CRMConnector` interface. Attio, Affinity, and Salesforce out of the box;
+   HubSpot is one new file away.
+2. **A brief** (`src/gather.ts` + `src/brief.ts`) — the default sweep. For a
+   domain the reads are always the same, so Valentine does them itself:
+   search → rank → context on the top matches. The verdict is a rule over that
+   evidence (any real signal = prior contact; a signal only on a name,
+   subdomain or loose website match = ambiguous, since it may be a different
+   company), so it never depends on a model
+   getting it right. The model makes exactly **one** call — the one-line
+   summary — with a timeout, a template fallback, and a fact-check (an owner or
+   a date the CRM didn't give us gets the line thrown out). Two CRMs on a local
+   LFM2.5-2.6B: **5–7 s**, down from ~90 s. The original tool-calling loop
+   (`src/agent.ts`) is still there behind `--strategy agent` for when you want
+   the model to steer. Runs on Anthropic models or fully local ones — Ollama or
+   in-process ONNX (then nothing leaves your machine at all).
+3. **A trigger** (`src/cli.ts`) — the CLI, the MCP server, `valentine slack`
+   (a `/valentine` slash command), and `valentine watch` — a pre-meeting
+   heads-up that reads the macOS Calendar (including Outlook/M365 accounts
+   added via Internet Accounts) and notifies you 30 minutes before external
+   meetings.
 
 The rules it runs by live in `src/prompt.ts`. Full design in [`SPEC.md`](./SPEC.md).
 
@@ -62,11 +87,160 @@ Valentine is built to be driven by other agents, not just typed by hand.
   openclaws…).
 - Full instructions for agents live in [`AGENTS.md`](./AGENTS.md).
 
+## What you get back
+
+Every surface renders the same structured brief — verdict, one line, the facts,
+and click-to-act links (open the CRM record · website · LinkedIn):
+
+- **CLI** — colored block, facts, links as real hyperlinks in terminals that
+  support them (iTerm2, Terminal.app, WezTerm, kitty, VS Code). Add
+  `--notify=slack` to also DM yourself the brief (works with `--json` too).
+- **`--json` / MCP** — `facts` (people, lists, notes, connection, dates) and
+  `facts.links` next to the verdict, so agents can act without parsing prose.
+- **Slack** — Block Kit for both the `/valentine` slash command and the
+  `valentine watch --notify slack` heads-up: one card per attendee company
+  across every CRM swept. The headline links the domain, the record and the
+  contact and carries state pills (`9y 3m stale`, `Negotiation`, `owner unset`,
+  `names differ across CRMs`, `Salesforce unreachable`); every name and date in
+  the summary links to its record, activity or list; the field grid pairs
+  Salesforce and Attio values side by side; *Valentine says* gives one grounded
+  next step; one action row per CRM opens the record, its activity/emails, or a
+  prefilled Log call · New task · + Lead · + Account form — and says
+  `nothing in Attio` when a CRM has never seen them. Read-only by default:
+  every button is a link, and a form is only saved when you press Save in the
+  CRM. With `valentine slack` answering the card, a `···` menu adds Re-run
+  sweep · Copy SF/Attio ID · Mute domain 30d · Mark handled (local state, the
+  watch loop honours it); with writes opted in, the green write-through
+  buttons appear too, each behind a confirm dialog. The meeting heads-up also
+  links *Open event* / *Join* straight from the calendar entry.
+- **Salesforce depth** — the connector reads what a CRE ownership desk reads:
+  Accounts, Contacts *and unconverted Leads*; Opportunities with amount, close
+  date, owner and (when the org has them) the deal-shape fields — `45,000 SF ·
+  Office · 60 mo` — probed once and skipped when absent; the Task/Event behind
+  "last touched"; and what is *already scheduled* (open activities, soonest
+  first), so the next step becomes "Glenn already has a call on 2026-10-01 —
+  coordinate" instead of a cold outreach.
+
+## Valentine Lab — watch it run
+
+`npm run lab` serves a local dashboard at `https://valentine-lab.localhost`
+(portless; nothing leaves the machine). It runs the real code paths and streams
+every step over SSE, so you see the sweep as it happens: the CRM searches and
+context pulls per source, the rule-based verdict, the one model call with token
+counts and tok/s, then the Slack Block Kit message exactly as the watch daemon
+would post it. Four scenarios:
+
+- **Sweep** — any target; pick the model and which CRMs; optionally skip the model.
+- **Meeting** — pick an upcoming calendar event (or type attendee domains), build
+  the heads-up, send it to your Slack DM with one click.
+- **Brief vs agent** — the deterministic path and the tool-calling loop on the
+  same target, every agent turn timed.
+- **Model bench** — the four fixture cases through every installed model, with a
+  median bar chart and the grounding check applied per line.
+
+The "Which model, when" panel explains the trade-offs. Timings shown are
+measured on your machine, not simulated.
+
+## Always-on: the Slack endpoint behind a tunnel
+
+Slack needs a public HTTPS URL it can POST to, and it needs the same one
+tomorrow — so the `/valentine` slash command and the card's buttons run as two
+launchd agents on macOS: `valentine slack` on localhost, and a **named**
+Cloudflare tunnel in front of it. Named, not a quick tunnel: the hostname is
+yours and survives restarts, so you set the Slack URLs once.
+
+**1. Create the tunnel and its DNS record — once.**
+
+```bash
+brew install cloudflared
+cloudflared tunnel login                     # pick the zone in the browser
+cloudflared tunnel create valentine          # prints <UUID>, writes ~/.cloudflared/<UUID>.json
+cloudflared tunnel route dns valentine valentine.example.com   # the CNAME → <UUID>.cfargotunnel.com
+```
+
+**2. Point it at the local server** in `~/.cloudflared/config.yml` (port =
+`VALENTINE_SLACK_PORT`, default 3141):
+
+```yaml
+tunnel: <UUID>
+credentials-file: /Users/you/.cloudflared/<UUID>.json
+ingress:
+  - hostname: valentine.example.com
+    service: http://localhost:3141
+  - service: http_status:404
+```
+
+**3. Install both agents** — `com.valentine.slack` and
+`com.valentine.cloudflared`, `KeepAlive` + `RunAtLoad`, logging to
+`~/.valentine/slack.log` and `~/.valentine/cloudflared.log`:
+
+```bash
+scripts/install-slack-launchd.sh            # or: … 8080  to use another port
+scripts/install-slack-launchd.sh --print    # show the plists, install nothing
+scripts/install-slack-launchd.sh --uninstall
+```
+
+Same shape as the watch daemon (`scripts/install-launchd.sh`): the plists call
+a wrapper — `scripts/slack-launchd.sh` — that sources `.env` and puts the mise
+shims and Homebrew on `PATH`, because a launchd agent gets neither your shell
+profile nor a `node` on its bare `PATH`. Secrets stay in `.env`
+(`VALENTINE_SLACK_SIGNING_SECRET`); nothing is copied into the plist.
+
+**4. Give Slack the hostname.** In your Slack app,
+`https://valentine.example.com/` goes in **both** the slash command's *Request
+URL* and **Interactivity & Shortcuts → Request URL** — one server answers both
+(any path; it replies to every POST). Writes stay off until you opt in with
+`VALENTINE_WRITES=1`.
+
+```bash
+launchctl print gui/$UID/com.valentine.slack | head    # status
+tail -f ~/.valentine/slack.log ~/.valentine/cloudflared.log
+```
+
 ## Your keys, your data
 
 Runs with your CRM token, on your machine. Nothing leaves the fund. Keys are
 stored locally at `~/.valentine/config.json` (or via env: `VALENTINE_ATTIO_KEY`,
-`VALENTINE_AFFINITY_KEY`, `ANTHROPIC_API_KEY`).
+`VALENTINE_AFFINITY_KEY`, `VALENTINE_SALESFORCE_KEY` +
+`VALENTINE_SALESFORCE_INSTANCE_URL`, `ANTHROPIC_API_KEY`).
+
+Prefer a local model — and no Anthropic key at all? Two ways, both defaulting
+to [LFM2.5-2.6B](https://huggingface.co/LiquidAI/LFM2.5-2.6B), a free
+open-weights 2.6B model with best-in-class tool calling. Because the default
+sweep asks the model for one sentence and nothing else, smaller Liquid models
+work too — measured on the brief task with `node scripts/bench-models.mjs`
+(M1 Max, one CRM):
+
+| Ollama model | per call | size | notes |
+|---|---|---|---|
+| `hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M` (default) | ~1–2 s | 1.7 GB | best writing |
+| `hf.co/LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M` | ~1 s | 5.2 GB | MoE (1B active); most faithful to the facts, drier prose |
+| `hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q8_0` | ~0.5 s | 1.2 GB | reads fine, no `<think>` phase |
+| `hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0` | ~0.25 s | 380 MB | terse |
+
+If `ollama pull hf.co/…` stalls, fetch the GGUF with the Hugging Face CLI and
+register it: `hf download LiquidAI/LFM2.5-8B-A1B-GGUF LFM2.5-8B-A1B-Q4_K_M.gguf
+--local-dir ~/models/lfm`, then a one-line Modelfile (`FROM ./LFM2.5-8B-A1B-Q4_K_M.gguf`)
+and `ollama create lfm2.5-8b-a1b:q4 -f Modelfile`. Valentine detects on first
+use whether a model reasons unconditionally (both LFM2.5 sizes do, one by
+template, one by habit) and skips that phase with a prefill — cached in
+`~/.valentine/model-traits.json`.
+
+The verdict, owner, last touch, stage and links come from the CRM either way.
+The model stays resident between sweeps (`VALENTINE_OLLAMA_KEEP_ALIVE`, default
+24h) so a pre-meeting heads-up never waits on a load.
+
+- **Ollama** (recommended) — `ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M`
+  (~1.7 GB), then pick the Ollama provider in `valentine init`. Needs Ollama
+  ≥0.14 — older builds reject tool calling for this model.
+- **In-process ONNX** — no server at all. Install the runtime next to valentine
+  (`npm i -g @huggingface/transformers` if valentine is global, otherwise
+  `npm i @huggingface/transformers` in your project), then pick the ONNX
+  provider in `valentine init`. First run downloads ~1.9 GB to the Hugging Face
+  cache. Simplest to set up, but noticeably slower per step than Ollama, which
+  gets Metal/GPU acceleration — prefer Ollama if you have it.
+
+See [`.env.example`](./.env.example) for the full env-var list.
 
 ## Develop
 

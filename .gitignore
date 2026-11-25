@@ -7,4 +7,17 @@ dist/
 .valentine/
 .vercel
 
-.vercel
+# Local agent/session state — never commit (config like .claude/rules/ IS tracked)
+.claude/state/
+.claude/logs/
+.claude/hooks/logs/
+.claude/feedback/
+.claude/HANDOFF.md
+.instance/
+.remember/
+
+# Local CRM review exports (client data — never commit; public repo)
+review-local/
+
+# Plans hook version-sync backups (local)
+.plans-template-backups/

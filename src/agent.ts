@@ -1,15 +1,17 @@
 // THE AGENT LOOP. model thinks -> calls a read tool -> we run it -> feed result
-// back -> repeat, until it calls submit_verdict. Hand-rolled on the Anthropic
-// Messages API so it stays tiny, auditable, and model-swappable.
+// back -> repeat, until it calls submit_verdict. Hand-rolled on a minimal
+// Messages surface (ModelClient: Anthropic API or local Ollama via the adapter)
+// so it stays tiny, auditable, and model/provider-swappable.
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompt.js";
 import { toolSchemas, runTool, toVerdict, SUBMIT_VERDICT } from "./tools.js";
+import type { ModelClient } from "./models.js";
 import type { CRMConnector, Verdict } from "./connectors/types.js";
 
 /** Given a target, sweep the CRM and return a structured verdict. */
 export async function lookup(
-  client: Anthropic,
+  client: ModelClient,
   model: string,
   crm: CRMConnector,
   target: string,

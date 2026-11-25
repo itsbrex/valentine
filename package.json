@@ -1,6 +1,6 @@
 {
   "name": "valentine-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Know before you walk in. The open-source agent that remembers every founder your fund has talked to. Read-only.",
   "homepage": "https://tryvalentine.com",
   "type": "module",
@@ -11,6 +11,7 @@
   },
   "files": [
     "dist",
+    "assets",
     "README.md",
     "AGENTS.md",
     "SPEC.md",
@@ -24,7 +25,10 @@
     "access": "public"
   },
   "scripts": {
+    "plans": "bun scripts/plans.mjs",
+    "showcase": "node scripts/showcase.mjs",
     "dev": "tsx src/cli.ts",
+    "test": "tsx --test test/*.test.ts",
     "mcp": "tsx src/mcp.ts",
     "build": "tsc",
     "start": "node dist/cli.js",

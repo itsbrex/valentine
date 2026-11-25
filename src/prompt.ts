@@ -28,7 +28,11 @@ You only read. You never write, send a message, or move a deal.
   doubt between clean and prior_contact, choose prior_contact.
 - clean — a record genuinely has no interactions, lists, notes, or owner; or there
   is no matching record at all.
-- ambiguous — multiple weak matches you cannot confidently disambiguate.
+- ambiguous — the only signals sit on a record tied to the target by a name, a
+  subdomain, or a loose website match (\`matchedBy\` is "subdomain", "name" or
+  "loose", or the target is a name, not a domain): it may be a different
+  company, so say "possible match" and never state it as prior contact. Also:
+  multiple weak matches you cannot confidently disambiguate.
 
 ## The summary line (one line, a partner reads it in 2 seconds)
 Lead with the most actionable fact. Examples:

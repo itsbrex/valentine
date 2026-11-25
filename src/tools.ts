@@ -72,13 +72,20 @@ export async function runTool(
 }
 
 /** Map the model's submit_verdict input into our Verdict shape. */
+/** Small models fill optional fields with placeholder words rather than
+ *  omitting them; "Owner: null" reads as a bug to whoever's about to walk into
+ *  the meeting. Treat those as absent. */
+const EMPTY_FIELD = /^(null|none|n\/a|na|unknown|undefined|-|)$/i;
+const field = (v: unknown): string | undefined =>
+  typeof v === "string" && !EMPTY_FIELD.test(v.trim()) ? v : undefined;
+
 export function toVerdict(input: any): Verdict {
   return {
     verdict: input.verdict,
     summary: input.summary,
-    owner: input.owner,
-    lastTouch: input.last_touch,
-    status: input.status,
+    owner: field(input.owner),
+    lastTouch: field(input.last_touch),
+    status: field(input.status),
     citations: Array.isArray(input.citations) ? input.citations : [],
   };
 }
